@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.adk.agents import Agent
-from google.adk.models.lite_llm import LiteLlm  # Added LiteLlm import
 from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
 from pydantic import (
@@ -197,61 +196,32 @@ def sequentialthinking(
 
 # --- Model Configuration ---
 
-# Default to Google Gemini if not specified
-DEFAULT_MODEL_PROVIDER = "litellm"
-# Default models for each provider
-DEFAULT_GOOGLE_MODEL = "gemini-2.0-flash" # Use a stable Gemini model
-DEFAULT_LITELLM_MODEL = "openrouter/deepseek/deepseek-chat-v3-0324" # Target OpenRouter model
+# Default Google model
+DEFAULT_GOOGLE_MODEL = "gemini-2.0-flash" # Use a stable Gemini model like 1.5 Flash
+# Removed LiteLlm default model
 
-# Get configuration from environment variables
-MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", DEFAULT_MODEL_PROVIDER).lower()
+# Get optional user override for the model name
 LLM_MODEL_NAME = os.environ.get("LLM_MODEL") # User can override the default
 
-# Determine the *general* model object or string to use for most agents
-if MODEL_PROVIDER == "litellm":
-    model_identifier = LLM_MODEL_NAME or DEFAULT_LITELLM_MODEL
-    # Ensure API keys are set for LiteLLM providers (e.g., OPENROUTER_API_KEY)
-    # LiteLLM automatically picks up keys like OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY etc.
-    # No need to explicitly pass them unless using custom headers/api_base
-    if "openrouter" in model_identifier and not os.environ.get("OPENROUTER_API_KEY"):
-         # Use print for warnings now
-         pass # Or raise an error, or handle differently
-    # Add checks for other providers if needed (e.g., ANTHROPIC_API_KEY)
+# Determine if Vertex AI should be used
+use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+google_model_name = LLM_MODEL_NAME or DEFAULT_GOOGLE_MODEL
 
-    active_model_config = LiteLlm(model=model_identifier)
-elif MODEL_PROVIDER == "google":
-    # Determine if Vertex AI should be used (based on standard google-genai env var)
-    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
-    google_model_name = LLM_MODEL_NAME or DEFAULT_GOOGLE_MODEL
-
-    if use_vertex:
-         if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-              # Use print for warnings
-              pass # Or raise an error, or handle differently
-         # For Vertex, just use the model name. ADK handles endpoint strings automatically if provided.
-         active_model_config = google_model_name
-    else:
-         if not os.environ.get("GOOGLE_API_KEY"):
-              # Use print for warnings
-              pass # Or raise an error, or handle differently
-         active_model_config = google_model_name
-else:
-    # Use print for errors
-    active_model_config = DEFAULT_GOOGLE_MODEL
-
-# --- Specific configuration for Researcher Agent (always Google) ---
-# We use the default Google model name directly. ADK/google-genai handles routing
-# to AI Studio or Vertex based on GOOGLE_GENAI_USE_VERTEXAI and credentials.
-researcher_model_config = DEFAULT_GOOGLE_MODEL
-# Print warnings for Google credentials if Researcher is used, regardless of global provider
-if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true":
+# Configure the model, checking for necessary credentials/settings
+active_model_config = google_model_name # Default to model name string
+if use_vertex:
+    # Check for Vertex AI specific environment variables
     if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-        # Use print for warnings
-        pass # Or raise an error, or handle differently
+        print("Warning: Using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION environment variables are not set.")
+        # No change to active_model_config needed, ADK handles the string name for Vertex
 else:
+    # Check for Google AI Studio API key
     if not os.environ.get("GOOGLE_API_KEY"):
-        # Use print for warnings
-        pass # Or raise an error, or handle differently
+        print("Warning: Using Google AI Studio (default), but GOOGLE_API_KEY environment variable is not set.")
+    # No change to active_model_config needed, ADK handles the string name for AI Studio
+
+# All agents will now use the same Google model configuration
+researcher_model_config = active_model_config
 
 
 # --- Specialist Agent Definitions ---
@@ -261,7 +231,7 @@ else:
 
 planner_agent = Agent(
     name="Planner",
-    model=active_model_config, # Use configured model
+    model=active_model_config, # Use configured Google model
     description="Develops strategic plans and roadmaps based on delegated sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -280,7 +250,7 @@ planner_agent = Agent(
 
 researcher_agent = Agent(
     name="Researcher",
-    model=researcher_model_config, # Force Google model for Researcher
+    model=researcher_model_config, # Use configured Google model
     description="Gathers and validates information based on delegated research sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -300,7 +270,7 @@ researcher_agent = Agent(
 
 analyzer_agent = Agent(
     name="Analyzer",
-    model=active_model_config, # Use configured model
+    model=active_model_config, # Use configured Google model
     description="Performs analysis based on delegated analytical sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -319,7 +289,7 @@ analyzer_agent = Agent(
 
 critic_agent = Agent(
     name="Critic",
-    model=active_model_config, # Use configured model
+    model=active_model_config, # Use configured Google model
     description="Critically evaluates ideas or assumptions based on delegated critique sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -339,7 +309,7 @@ critic_agent = Agent(
 
 synthesizer_agent = Agent(
     name="Synthesizer",
-    model=active_model_config, # Use configured model
+    model=active_model_config, # Use configured Google model
     description="Integrates information or forms conclusions based on delegated synthesis sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -366,35 +336,38 @@ synthesizer_tool = AgentTool(synthesizer_agent)
 
 root_agent = Agent(
     name="sequential_thinking_coordinator",
-    model=active_model_config, # Use configured model
+    model=active_model_config, # Use configured Google model
     description=(
         "Coordinates a team of specialist agents (Planner, Researcher, Analyzer, Critic, Synthesizer) "
-        "to perform sequential thinking tasks, allowing for revisions and branching."
+        "to perform sequential thinking tasks using session state for history, allowing for revisions and branching."
     ),
     instruction=(
         "You are the Coordinator of a specialist team performing a sequential thinking task.\n"
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         "Your available specialists are: Planner, Researcher, Analyzer, Critic, Synthesizer.\n"
-        "Your available tools are: `sequentialthinking` (for managing thought metadata) and tools to call each specialist (e.g., `Planner`, `Researcher`).\n\n"
+        "Your available tools are: `sequentialthinking` (for validating thought metadata) and tools to call each specialist (`Planner`, `Researcher`, `Analyzer`, `Critic`, `Synthesizer`).\n\n"
+        "**State Management:** You MUST use `session.state['thought_history']` (a list of dictionaries) to manage the structured history of the thinking process within this session. Initialize it as an empty list if it doesn't exist.\n\n"
         "**Your Workflow:**\n"
-        "1.  **Receive Input:** Get the initial user problem or the result from a previous thought step.\n"
-        "2.  **Plan Thought:** Decide the content of the *current* thought (e.g., 'Analyze assumptions', 'Plan next steps', 'Revise thought #X', 'Branch to explore Y').\n"
-        "3.  **Log Thought Metadata:** Call the `sequentialthinking` tool with the planned `thought` content and all necessary metadata (`thoughtNumber`, `totalThoughts`, `nextThoughtNeeded`, `isRevision`, etc.). This validates and records the step structure.\n"
-        "4.  **Analyze & Delegate:** Based *only* on the `thoughtContent` returned by `sequentialthinking`, determine the primary action (plan, research, analyze, critique, synthesize) and identify the **single most appropriate specialist** agent required for this specific thought step. If multiple aspects are involved, break it down or prioritize the core action for this step.\n"
-        "5.  **Call Specialist:** Use the corresponding AgentTool (e.g., `Planner` tool to call the planner agent) to delegate the task. Pass the relevant `thoughtContent` and any necessary prior context as the input prompt to the specialist tool.\n"
-        "6.  **Receive & Integrate:** Get the response from the specialist agent.\n"
-        "7.  **Synthesize Step Result:** Combine the specialist's response with the context of the current thought step. This synthesis forms the basis for the *next* thought.\n"
-        "8.  **Decide Next Step:** Based on the synthesized result and the overall goal:\n"
-        "    *   If more thinking is needed (`nextThoughtNeeded` was true from `sequentialthinking` tool), plan the *next* thought (increment `thoughtNumber`) and go back to step 2.\n"
-        "    *   Consider if revision or branching is needed based on the specialist's output (e.g., Critic found a flaw, Analyzer identified ambiguity). If so, plan the revision/branch thought for the next step.\n"
-        "    *   If the process is complete (`nextThoughtNeeded` was false), proceed to step 9.\n"
-        "9.  **Final Answer:** Synthesize the entire sequence of thoughts (including revisions and branches, based on the history you track in the conversation) and provide a comprehensive final answer to the initial user request.\n\n"
+        "1.  **Initialize/Load State:** Access the current invocation context (`ctx`). Check if `ctx.session.state['thought_history']` exists. If not, initialize it: `ctx.session.state['thought_history'] = []`. Read the existing history from this state variable.\n"
+        "2.  **Receive Input/Context:** Get the initial user problem or the result/context from the *last entry* in `ctx.session.state['thought_history']`.\n"
+        "3.  **Plan Thought:** Based on the input and history, decide the content of the *current* thought (e.g., 'Analyze assumptions', 'Plan next steps', 'Revise thought #X', 'Branch to explore Y'). Determine the current `thoughtNumber` (usually `len(ctx.session.state['thought_history']) + 1`, adjust for revisions/branches if necessary).\n"
+        "4.  **Log Thought Metadata:** Call the `sequentialthinking` tool with the planned `thought` content and all necessary metadata (`thoughtNumber`, `totalThoughts`, `nextThoughtNeeded`, `isRevision`, etc.).\n"
+        "5.  **Analyze & Delegate:** Based *only* on the `thoughtContent` returned by `sequentialthinking`, determine the primary action (plan, research, analyze, critique, synthesize) and identify the **single most appropriate specialist** agent required for this specific thought step.\n"
+        "6.  **Call Specialist Tool:** Use the corresponding AgentTool (e.g., `Planner` tool) to delegate the task. Pass the relevant `thoughtContent` and necessary context (potentially summarized from `ctx.session.state['thought_history']`) as the input prompt to the specialist tool.\n"
+        "7.  **Receive & Record:** Get the response from the specialist agent tool. Create a dictionary containing the metadata from the `sequentialthinking` call and the specialist's response.\n"
+        "8.  **Update State:** Append the dictionary created in the previous step to `ctx.session.state['thought_history']`.\n"
+        "9.  **Decide Next Step:** Based on the latest entry in `ctx.session.state['thought_history']` and the overall goal:\n"
+        "    *   If the `sequentialthinking` result indicated `nextThoughtNeeded` was true, plan the *next* thought and go back to step 3.\n"
+        "    *   Consider if revision or branching is needed based on the specialist's output. If so, plan the revision/branch thought for the next step.\n"
+        "    *   If `nextThoughtNeeded` was false, proceed to step 10.\n"
+        "10. **Final Answer:** Synthesize the *entire sequence* of thoughts by processing the structured data in `ctx.session.state['thought_history']`. Provide a comprehensive final answer to the initial user request.\n\n"
         "**Important Rules:**\n"
-        "*   Always call `sequentialthinking` *first* for each thought step to log the metadata.\n"
-        "*   Delegate to **only one** specialist agent per thought step, based on the primary action of that thought.\n"
-        "*   Use the specialist agent's response to inform the *next* thought step's planning.\n"
-        "*   Track the history of thoughts and specialist responses within the conversation context to build the final answer."
+        "*   Always call `sequentialthinking` *first* for each thought step.\n"
+        "*   Delegate to **only one** specialist agent tool per thought step.\n"
+        "*   Use the specialist's response (recorded in state) to inform the *next* thought.\n"
+        "*   **Crucially, use `session.state['thought_history']` for reading and storing the structured history.** Access the context via `ctx.session.state`."
     ),
+    # The sub_agents parameter is removed. Hierarchy is implied by tool usage.
     tools=[
         sequentialthinking,
         planner_tool,
@@ -403,5 +376,7 @@ root_agent = Agent(
         critic_tool,
         synthesizer_tool
     ],
-    # enable_state_persistence=True, # Consider enabling for longer conversations
+    # Enable state persistence if you want state to survive agent restarts *within the same session*,
+    # but remember it's still tied to the SessionService implementation for true persistence.
+    # enable_state_persistence=True,
 ) 
