@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.adk.agents import Agent
+from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
 from pydantic import (BaseModel, ConfigDict, Field, ValidationError,
                       field_validator, model_validator)
@@ -380,14 +381,14 @@ researcher_agent = Agent(
         "You will receive specific sub-tasks from the Team Coordinator requiring information gathering or verification.\n"
         "**When you receive a sub-task:**\n"
         " 1. Identify the specific information requested in the delegated task.\n"
-        " 2. Use your available tools (if any) or internal knowledge to find relevant facts, data, or context.\n"
-        " 3. Validate information where possible.\n"
+        " 2. **Actively use the `google_search` tool** to find relevant facts, data, or context from the web. Prioritize using this tool for external information.\n"
+        " 3. Validate information where possible, potentially using search results.\n"
         " 4. Structure your findings clearly.\n"
-        " 5. Note any significant information gaps encountered.\n"
+        " 5. Note any significant information gaps encountered during your research.\n"
         " 6. Formulate a response containing the research findings relevant to the sub-task.\n"
         " 7. Return ONLY the research findings as your response."
     ),
-    tools=[] # Add ExaTools or other search tools here
+    tools=[google_search] # Add google_search tool here
 )
 
 analyzer_agent = Agent(
