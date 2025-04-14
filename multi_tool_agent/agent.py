@@ -2,11 +2,13 @@ import json
 import logging
 import logging.handlers
 import sys
+import os # Added for environment variables
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.adk.agents import Agent
+from google.adk.models.lite_llm import LiteLlm # Added LiteLlm import
 from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
 from pydantic import (BaseModel, ConfigDict, Field, ValidationError,
@@ -347,6 +349,64 @@ def sequentialthinking(
             "status": "failed"
         }
 
+# --- Model Configuration ---
+
+# Default to Google Gemini if not specified
+DEFAULT_MODEL_PROVIDER = "litellm"
+# Default models for each provider
+DEFAULT_GOOGLE_MODEL = "gemini-2.0-flash" # Use a stable Gemini model
+DEFAULT_LITELLM_MODEL = "openrouter/deepseek/deepseek-chat-v3-0324" # Target OpenRouter model
+
+# Get configuration from environment variables
+MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", DEFAULT_MODEL_PROVIDER).lower()
+LLM_MODEL_NAME = os.environ.get("LLM_MODEL") # User can override the default
+
+# Determine the *general* model object or string to use for most agents
+if MODEL_PROVIDER == "litellm":
+    model_identifier = LLM_MODEL_NAME or DEFAULT_LITELLM_MODEL
+    # Ensure API keys are set for LiteLLM providers (e.g., OPENROUTER_API_KEY)
+    # LiteLLM automatically picks up keys like OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY etc.
+    # No need to explicitly pass them unless using custom headers/api_base
+    if "openrouter" in model_identifier and not os.environ.get("OPENROUTER_API_KEY"):
+         logger.warning("MODEL_PROVIDER is 'litellm' and model includes 'openrouter', but OPENROUTER_API_KEY environment variable is not set.")
+    # Add checks for other providers if needed (e.g., ANTHROPIC_API_KEY)
+
+    active_model_config = LiteLlm(model=model_identifier)
+    logger.info(f"Using LiteLLM model for general agents: {model_identifier}")
+elif MODEL_PROVIDER == "google":
+    # Determine if Vertex AI should be used (based on standard google-genai env var)
+    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+    google_model_name = LLM_MODEL_NAME or DEFAULT_GOOGLE_MODEL
+
+    if use_vertex:
+         if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+              logger.warning("GOOGLE_GENAI_USE_VERTEXAI is TRUE, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION environment variables are not set.")
+         # For Vertex, just use the model name. ADK handles endpoint strings automatically if provided.
+         active_model_config = google_model_name
+         logger.info(f"Using Google Vertex AI model for general agents: {google_model_name}")
+    else:
+         if not os.environ.get("GOOGLE_API_KEY"):
+              logger.warning("Using Google AI Studio (GOOGLE_GENAI_USE_VERTEXAI is not TRUE), but GOOGLE_API_KEY environment variable is not set.")
+         active_model_config = google_model_name
+         logger.info(f"Using Google AI Studio model for general agents: {google_model_name}")
+else:
+    logger.error(f"Invalid MODEL_PROVIDER: '{MODEL_PROVIDER}'. Using default Google model for general agents: {DEFAULT_GOOGLE_MODEL}")
+    active_model_config = DEFAULT_GOOGLE_MODEL
+
+# --- Specific configuration for Researcher Agent (always Google) ---
+# We use the default Google model name directly. ADK/google-genai handles routing
+# to AI Studio or Vertex based on GOOGLE_GENAI_USE_VERTEXAI and credentials.
+researcher_model_config = DEFAULT_GOOGLE_MODEL
+logger.info(f"Researcher agent will always use Google model: {researcher_model_config}")
+# Log warnings for Google credentials if Researcher is used, regardless of global provider
+if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true":
+    if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+        logger.warning("Researcher agent uses Google Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION environment variables are not set.")
+else:
+    if not os.environ.get("GOOGLE_API_KEY"):
+        logger.warning("Researcher agent uses Google AI Studio, but GOOGLE_API_KEY environment variable is not set.")
+
+
 # --- Specialist Agent Definitions ---
 # Note: For simplicity, these agents currently have no specific tools assigned.
 # They rely solely on their instructions and the LLM's capabilities.
@@ -354,7 +414,7 @@ def sequentialthinking(
 
 planner_agent = Agent(
     name="Planner",
-    model="gemini-2.0-flash-exp", # Use a consistent model or specify as needed
+    model=active_model_config, # Use configured model
     description="Develops strategic plans and roadmaps based on delegated sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -373,7 +433,7 @@ planner_agent = Agent(
 
 researcher_agent = Agent(
     name="Researcher",
-    model="gemini-2.0-flash-exp",
+    model=researcher_model_config, # Force Google model for Researcher
     description="Gathers and validates information based on delegated research sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -393,7 +453,7 @@ researcher_agent = Agent(
 
 analyzer_agent = Agent(
     name="Analyzer",
-    model="gemini-2.0-flash-exp",
+    model=active_model_config, # Use configured model
     description="Performs analysis based on delegated analytical sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -412,7 +472,7 @@ analyzer_agent = Agent(
 
 critic_agent = Agent(
     name="Critic",
-    model="gemini-2.0-flash-exp",
+    model=active_model_config, # Use configured model
     description="Critically evaluates ideas or assumptions based on delegated critique sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -432,7 +492,7 @@ critic_agent = Agent(
 
 synthesizer_agent = Agent(
     name="Synthesizer",
-    model="gemini-2.0-flash-exp",
+    model=active_model_config, # Use configured model
     description="Integrates information or forms conclusions based on delegated synthesis sub-tasks.",
     instruction=(
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -459,7 +519,7 @@ synthesizer_tool = AgentTool(synthesizer_agent)
 
 root_agent = Agent(
     name="sequential_thinking_coordinator",
-    model="gemini-2.0-flash-exp", # Or Gemini 1.5 Pro for more complex reasoning
+    model=active_model_config, # Use configured model
     description=(
         "Coordinates a team of specialist agents (Planner, Researcher, Analyzer, Critic, Synthesizer) "
         "to perform sequential thinking tasks, allowing for revisions and branching."
