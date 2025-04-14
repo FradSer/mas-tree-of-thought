@@ -1,76 +1,21 @@
 import json
-import logging
-import logging.handlers
-import sys
-import os # Added for environment variables
+import os  # Added for environment variables
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.adk.agents import Agent
-from google.adk.models.lite_llm import LiteLlm # Added LiteLlm import
+from google.adk.models.lite_llm import LiteLlm  # Added LiteLlm import
 from google.adk.tools import google_search
 from google.adk.tools.agent_tool import AgentTool
-from pydantic import (BaseModel, ConfigDict, Field, ValidationError,
-                      field_validator, model_validator)
-
-# --- Logging Setup ---
-
-def setup_logging() -> logging.Logger:
-    """
-    Set up application logging with both file and console handlers.
-    Logs will be stored in the user's home directory under .sequential_thinking/logs.
-
-    Returns:
-        Logger instance configured with both handlers.
-    """
-    # Create logs directory in user's home
-    home_dir = Path.home()
-    log_dir = home_dir / ".sequential_thinking" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create logger
-    logger = logging.getLogger("sequential_thinking_adk") # Changed name slightly
-    # Avoid adding handlers multiple times if the module is reloaded
-    if logger.hasHandlers():
-        logger.handlers.clear()
-
-    logger.setLevel(logging.DEBUG)
-
-    # Log format
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # File handler with rotation
-    log_file = log_dir / "sequential_thinking_adk.log"
-    try:
-        file_handler = logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5,
-            encoding='utf-8'
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    except PermissionError:
-        print(f"Warning: Could not write to log file {log_file}. Check permissions.", file=sys.stderr)
-        # Fallback or skip file logging if needed
-
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
-    return logger
-
-logger = setup_logging()
-logger.info("Sequential Thinking ADK Logger Initialized.")
-
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # --- Thought Data Model (Used for Tool Argument Validation and Typing) ---
 
@@ -158,105 +103,6 @@ class ThoughtData(BaseModel):
         """Convert thought data to dictionary format for serialization"""
         return self.model_dump(exclude_none=True)
 
-# --- Utility for Formatting Thoughts (for Logging) ---
-
-def format_thought_for_log(thought_data: ThoughtData) -> str:
-    """Formats a thought for logging purposes, handling multi-byte characters."""
-    prefix = ''
-    context = ''
-    branch_info_log = '' # Added for explicit branch tracking in log
-
-    if thought_data.isRevision and thought_data.revisesThought is not None:
-        prefix = '🔄 Revision'
-        context = f' (revising thought {thought_data.revisesThought})'
-    elif thought_data.branchFromThought is not None and thought_data.branchId is not None:
-        prefix = '🌿 Branch'
-        context = f' (from thought {thought_data.branchFromThought}, ID: {thought_data.branchId})'
-        branch_info_log = f"Branch Details: ID='{thought_data.branchId}', originates from Thought #{thought_data.branchFromThought}"
-    else:
-        prefix = '💭 Thought'
-        context = ''
-
-    header = f"{prefix} {thought_data.thoughtNumber}/{thought_data.totalThoughts}{context}"
-
-    # Helper to get visual width of a string (approximates multi-byte characters)
-    def get_visual_width(s: str) -> int:
-        width = 0
-        for char in s:
-            # Basic approximation: Wide characters (e.g., CJK) take 2 cells, others 1
-            if 0x1100 <= ord(char) <= 0x115F or \
-               0x2329 <= ord(char) <= 0x232A or \
-               0x2E80 <= ord(char) <= 0x3247 or \
-               0x3250 <= ord(char) <= 0x4DBF or \
-               0x4E00 <= ord(char) <= 0xA4C6 or \
-               0xA960 <= ord(char) <= 0xA97C or \
-               0xAC00 <= ord(char) <= 0xD7A3 or \
-               0xF900 <= ord(char) <= 0xFAFF or \
-               0xFE10 <= ord(char) <= 0xFE19 or \
-               0xFE30 <= ord(char) <= 0xFE6F or \
-               0xFF00 <= ord(char) <= 0xFF60 or \
-               0xFFE0 <= ord(char) <= 0xFFE6 or \
-               0x1B000 <= ord(char) <= 0x1B001 or \
-               0x1F200 <= ord(char) <= 0x1F251 or \
-               0x1F300 <= ord(char) <= 0x1F64F or \
-               0x1F680 <= ord(char) <= 0x1F6FF:
-                width += 2
-            else:
-                width += 1
-        return width
-
-    header_width = get_visual_width(header)
-    thought_width = get_visual_width(thought_data.thought)
-    max_inner_width = max(header_width, thought_width)
-    border_len = max_inner_width + 4 # Accounts for '│ ' and ' │'
-
-    border = '─' * (border_len - 2) # Border width between corners
-
-    # Wrap thought text correctly based on visual width
-    thought_lines = []
-    current_line = ""
-    current_width = 0
-    words = thought_data.thought.split()
-    for i, word in enumerate(words):
-        word_width = get_visual_width(word)
-        space_width = 1 if current_line else 0
-
-        if current_width + space_width + word_width <= max_inner_width:
-            current_line += (" " if current_line else "") + word
-            current_width += space_width + word_width
-        else:
-            thought_lines.append(current_line)
-            current_line = word
-            current_width = word_width
-
-        # Add the last line if it exists
-        if i == len(words) - 1 and current_line:
-             thought_lines.append(current_line)
-
-
-    # Format lines with padding
-    formatted_header = f"│ {header}{' ' * (max_inner_width - header_width)} │"
-    formatted_thought_lines = [
-        f"│ {line}{' ' * (max_inner_width - get_visual_width(line))} │"
-        for line in thought_lines
-    ]
-
-    # Include branch info in the log box if applicable
-    formatted_branch_info = ''
-    if branch_info_log:
-        branch_info_width = get_visual_width(branch_info_log)
-        padding = ' ' * (max_inner_width - branch_info_width)
-        formatted_branch_info = f"\n│ {branch_info_log}{padding} │\n├{'─' * (border_len - 2)}┤" # Corrected newline escape
-
-    return f"""
-┌{border}┐
-{formatted_header}
-├{border}┤
-{''.join(formatted_thought_lines)}
-{formatted_branch_info} # Insert branch info line here if it exists
-└{border}┘"""
-
-
 # --- Sequential Thinking Tool (Metadata Management) ---
 
 def sequentialthinking(
@@ -312,7 +158,8 @@ def sequentialthinking(
         if current_thought_data.needsMoreThoughts and current_thought_data.thoughtNumber >= current_thought_data.totalThoughts:
             current_thought_data.totalThoughts = current_thought_data.thoughtNumber + 2
             current_thought_data.nextThoughtNeeded = True
-            # print(f"Info: Extended totalThoughts to {current_thought_data.totalThoughts}") # Replaced logger
+            # Optional: print info if needed for debugging
+            # print(f"Info: Extended totalThoughts to {current_thought_data.totalThoughts}")
 
         if current_thought_data.thoughtNumber >= current_thought_data.totalThoughts and not current_thought_data.needsMoreThoughts:
              current_thought_data.nextThoughtNeeded = False
@@ -336,14 +183,13 @@ def sequentialthinking(
         return result_data
 
     except ValidationError as e:
-        # print(f"Validation Error processing tool call: {e}", file=sys.stderr) # Replaced logger
+        # Print validation errors to stderr for debugging
         return {
             "error": f"Input validation failed: {e.errors()}",
             "status": "validation_error"
         }
     except Exception as e:
-        # import traceback
-        # print(f"Error processing sequentialthinking tool call: {e}\n{traceback.format_exc()}", file=sys.stderr) # Replaced logger
+        # Print general errors to stderr
         return {
             "error": f"An unexpected error occurred processing thought metadata: {str(e)}",
             "status": "failed"
@@ -368,11 +214,11 @@ if MODEL_PROVIDER == "litellm":
     # LiteLLM automatically picks up keys like OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY etc.
     # No need to explicitly pass them unless using custom headers/api_base
     if "openrouter" in model_identifier and not os.environ.get("OPENROUTER_API_KEY"):
-         logger.warning("MODEL_PROVIDER is 'litellm' and model includes 'openrouter', but OPENROUTER_API_KEY environment variable is not set.")
+         # Use print for warnings now
+         pass # Or raise an error, or handle differently
     # Add checks for other providers if needed (e.g., ANTHROPIC_API_KEY)
 
     active_model_config = LiteLlm(model=model_identifier)
-    logger.info(f"Using LiteLLM model for general agents: {model_identifier}")
 elif MODEL_PROVIDER == "google":
     # Determine if Vertex AI should be used (based on standard google-genai env var)
     use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
@@ -380,31 +226,32 @@ elif MODEL_PROVIDER == "google":
 
     if use_vertex:
          if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-              logger.warning("GOOGLE_GENAI_USE_VERTEXAI is TRUE, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION environment variables are not set.")
+              # Use print for warnings
+              pass # Or raise an error, or handle differently
          # For Vertex, just use the model name. ADK handles endpoint strings automatically if provided.
          active_model_config = google_model_name
-         logger.info(f"Using Google Vertex AI model for general agents: {google_model_name}")
     else:
          if not os.environ.get("GOOGLE_API_KEY"):
-              logger.warning("Using Google AI Studio (GOOGLE_GENAI_USE_VERTEXAI is not TRUE), but GOOGLE_API_KEY environment variable is not set.")
+              # Use print for warnings
+              pass # Or raise an error, or handle differently
          active_model_config = google_model_name
-         logger.info(f"Using Google AI Studio model for general agents: {google_model_name}")
 else:
-    logger.error(f"Invalid MODEL_PROVIDER: '{MODEL_PROVIDER}'. Using default Google model for general agents: {DEFAULT_GOOGLE_MODEL}")
+    # Use print for errors
     active_model_config = DEFAULT_GOOGLE_MODEL
 
 # --- Specific configuration for Researcher Agent (always Google) ---
 # We use the default Google model name directly. ADK/google-genai handles routing
 # to AI Studio or Vertex based on GOOGLE_GENAI_USE_VERTEXAI and credentials.
 researcher_model_config = DEFAULT_GOOGLE_MODEL
-logger.info(f"Researcher agent will always use Google model: {researcher_model_config}")
-# Log warnings for Google credentials if Researcher is used, regardless of global provider
+# Print warnings for Google credentials if Researcher is used, regardless of global provider
 if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true":
     if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-        logger.warning("Researcher agent uses Google Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION environment variables are not set.")
+        # Use print for warnings
+        pass # Or raise an error, or handle differently
 else:
     if not os.environ.get("GOOGLE_API_KEY"):
-        logger.warning("Researcher agent uses Google AI Studio, but GOOGLE_API_KEY environment variable is not set.")
+        # Use print for warnings
+        pass # Or raise an error, or handle differently
 
 
 # --- Specialist Agent Definitions ---
