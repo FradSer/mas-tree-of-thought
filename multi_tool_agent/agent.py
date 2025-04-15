@@ -1,6 +1,7 @@
 import os  # Added for environment variables
 import logging # Import logging
 import re # Import regex for score extraction
+import time # Import time for rate limiting sleep
 from datetime import datetime
 from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple # Add Tuple
 
@@ -174,70 +175,158 @@ def validate_thought_node_data(
 # --- Model Configuration ---
 
 def _configure_llm_models() -> Tuple[
-    str | LiteLlm, # Root / Planner / Critic
-    str,          # Researcher (Always Google)
-    str | LiteLlm  # Analyzer / Synthesizer
+    # Return types for Planner, Researcher, Analyzer, Critic, Synthesizer
+    str | LiteLlm,
+    str | LiteLlm,
+    str | LiteLlm,
+    str | LiteLlm,
+    str | LiteLlm,
+    str | LiteLlm, # Add Coordinator config type
 ]:
-    """Configures LLM models for agent groups based on environment variables."""
-    # --- Model Names --- 
+    """
+    Configures LLM models for each specialist agent based on environment variables.
+
+    Reads environment variables in the format: <AGENT_NAME>_MODEL_CONFIG=provider:model_name
+    Example: PLANNER_MODEL_CONFIG=openrouter:google/gemini-2.5-pro-preview-03-25
+             RESEARCHER_MODEL_CONFIG=google:gemini-2.0-flash
+
+    Supported providers: 'google', 'openrouter'.
+    Falls back to a default Google model if the variable is not set, invalid,
+    or if OpenRouter is specified without an API key.
+
+    Returns:
+        A tuple containing the model configurations for:
+        (Planner, Researcher, Analyzer, Critic, Synthesizer)
+        (Planner, Researcher, Analyzer, Critic, Synthesizer, Coordinator)
+    """
+    # --- Default Model ---
     default_google_model = "gemini-2.0-flash"
-    google_model_for_researcher = os.environ.get("LLM_MODEL", default_google_model)
-    openrouter_high_capability_model = "openrouter/google/gemini-2.5-pro-preview-03-25" # For Root, Planner, Critic
-    openrouter_standard_capability_model = "openrouter/google/gemini-2.0-flash-001" # For Analyzer, Synthesizer
-    
-    # --- Environment Flags --- 
+
+    # --- Environment Flags ---
     use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
 
-    # --- Configuration Variables --- 
-    # Type hints accommodate fallback to string (Google model name)
-    root_planner_critic_config: str | LiteLlm
-    researcher_config: str 
-    analyzer_synth_config: str | LiteLlm
+    # --- Agent Names (Order matters for return tuple) ---
+    agent_names = ["planner", "researcher", "analyzer", "critic", "synthesizer", "coordinator"]
+    agent_configs: Dict[str, str | LiteLlm] = {}
 
-    # --- Configure Researcher (Always Google Standard) --- 
-    researcher_config = google_model_for_researcher
-    logger.info(f"Researcher agent configured to use Google model: {researcher_config}")
-    # Log Google credential warnings for the researcher model
-    if use_vertex:
-         if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-              logger.warning(f"Researcher using Vertex AI ({researcher_config}), but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.")
-    else:
-         if not os.environ.get("GOOGLE_API_KEY"):
-              logger.warning(f"Researcher using Google AI Studio ({researcher_config}), but GOOGLE_API_KEY env var not set.")
-    # --- End Researcher Configuration --- 
+    logger.info("--- Configuring Specialist Agent LLMs ---")
 
-    if openrouter_key:
-        logger.info("OPENROUTER_API_KEY found. Configuring other agents with specific OpenRouter models.")
-        try:
-            # Configure Group 1: Root, Planner, Critic
-            root_planner_critic_config = LiteLlm(model=openrouter_high_capability_model)
-            logger.info(f"Root, Planner, Critic agents configured for OpenRouter model: {openrouter_high_capability_model}")
+    for agent_name in agent_names:
+        env_var_name = f"{agent_name.upper()}_MODEL_CONFIG"
+        config_str = os.environ.get(env_var_name)
+        final_config: str | LiteLlm = default_google_model # Start with default
 
-            # Configure Group 3: Analyzer, Synthesizer
-            analyzer_synth_config = LiteLlm(model=openrouter_standard_capability_model)
-            logger.info(f"Analyzer, Synthesizer agents configured for OpenRouter model: {openrouter_standard_capability_model}")
+        if config_str:
+            logger.info(f"Found config for {agent_name.capitalize()} from {env_var_name}: '{config_str}'")
+            try:
+                parts = config_str.split(":", 1)
+                if len(parts) == 2:
+                    provider, model_name = parts[0].lower().strip(), parts[1].strip()
 
-        except Exception as e:
-            logger.error(f"Failed to configure LiteLlm for OpenRouter (High: {openrouter_high_capability_model}, Standard: {openrouter_standard_capability_model}): {e}. Falling back to Google models for these agents.")
-            # Fallback: Assign Google model used by Researcher to other groups
-            root_planner_critic_config = researcher_config 
-            analyzer_synth_config = researcher_config 
-            logger.info(f"Fallback: Root, Planner, Critic, Analyzer, Synthesizer will use Google model: {researcher_config}")
-            # Google cred warnings already logged for researcher_config
+                    if provider == "openrouter":
+                        if openrouter_key:
+                            try:
+                                final_config = LiteLlm(model=model_name)
+                                logger.info(f"  -> Configured {agent_name.capitalize()} for OpenRouter: {model_name}")
+                            except Exception as e:
+                                logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} ({model_name}): {e}. Falling back to default Google model ({default_google_model}).")
+                                final_config = default_google_model # Fallback
+                                # Log Google warnings for the fallback model
+                                if use_vertex:
+                                     if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                                          logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                                else:
+                                     if not os.environ.get("GOOGLE_API_KEY"):
+                                          logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                        else:
+                            logger.warning(f"  -> OpenRouter specified for {agent_name.capitalize()} ('{model_name}'), but OPENROUTER_API_KEY not found. Falling back to default Google model ({default_google_model}).")
+                            final_config = default_google_model # Fallback
+                            # Log Google warnings for the fallback model
+                            if use_vertex:
+                                 if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                                      logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                            else:
+                                 if not os.environ.get("GOOGLE_API_KEY"):
+                                      logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
 
-    else:
-        # No OpenRouter key: All agents use the Google model defined for Researcher
-        logger.info("OPENROUTER_API_KEY not found. All agents will use the same Google model as the Researcher.")
-        root_planner_critic_config = researcher_config
-        analyzer_synth_config = researcher_config
-        # Google cred warnings already logged for researcher_config
+                    elif provider == "google":
+                        final_config = model_name
+                        logger.info(f"  -> Configured {agent_name.capitalize()} for Google model: {model_name}")
+                        # Log Google credential warnings
+                        if use_vertex:
+                             if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                                  logger.warning(f"     (Using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                        else:
+                             if not os.environ.get("GOOGLE_API_KEY"):
+                                  logger.warning(f"     (Using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                    else:
+                        logger.warning(f"  -> Invalid provider '{provider}' in {env_var_name}. Falling back to default Google model ({default_google_model}).")
+                        final_config = default_google_model # Fallback
+                        # Log Google warnings for the fallback model
+                        if use_vertex:
+                             if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                                  logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                        else:
+                             if not os.environ.get("GOOGLE_API_KEY"):
+                                  logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
 
-    # Return the specific configurations for each group
-    return root_planner_critic_config, researcher_config, analyzer_synth_config 
+                else:
+                    logger.warning(f"  -> Invalid format in {env_var_name} (expected 'provider:model_name'). Falling back to default Google model ({default_google_model}).")
+                    final_config = default_google_model # Fallback
+                    # Log Google warnings for the fallback model
+                    if use_vertex:
+                         if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                              logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                    else:
+                         if not os.environ.get("GOOGLE_API_KEY"):
+                              logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+            except Exception as e:
+                 logger.error(f"  -> Error processing {env_var_name} ('{config_str}'): {e}. Falling back to default Google model ({default_google_model}).")
+                 final_config = default_google_model # Fallback on any unexpected error
+                 # Log Google warnings for the fallback model
+                 if use_vertex:
+                      if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                           logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+                 else:
+                      if not os.environ.get("GOOGLE_API_KEY"):
+                           logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
 
-# Get model configurations
-root_planner_critic_config, researcher_config, analyzer_synth_config = _configure_llm_models()
+        else:
+            # Environment variable not set, use default
+            logger.info(f"{agent_name.capitalize()} using default Google model: {default_google_model} (set {env_var_name} to override).")
+            final_config = default_google_model
+             # Log Google credential warnings for the default model
+            if use_vertex:
+                 if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+                      logger.warning(f"  (Default Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+            else:
+                 if not os.environ.get("GOOGLE_API_KEY"):
+                      logger.warning(f"  (Default Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+
+        agent_configs[agent_name] = final_config
+
+    logger.info("--- LLM Configuration Complete ---")
+
+    # Return configurations in the specified order
+    return (
+        agent_configs["planner"],
+        agent_configs["researcher"],
+        agent_configs["analyzer"],
+        agent_configs["critic"],
+        agent_configs["synthesizer"],
+        agent_configs["coordinator"], # Add Coordinator config to return tuple
+    )
+
+# Get individual model configurations
+(
+    planner_config,
+    researcher_config,
+    analyzer_config,
+    critic_config,
+    synthesizer_config,
+    coordinator_config, # Unpack Coordinator config
+) = _configure_llm_models()
 
 # --- Specialist Agent Definitions ---
 # Note: For simplicity, these agents currently have no specific tools assigned.
@@ -260,7 +349,7 @@ def _create_agent_instruction(specialist_name: str, core_task: str, extra_guidan
 # Planner Agent
 planner_agent = Agent(
     name="Planner",
-    model=root_planner_critic_config, # Use configured Google model
+    model=planner_config, # Use specific config
     description="Develops strategic plans and roadmaps based on delegated sub-tasks. Identifies alternative options.",
     instruction=_create_agent_instruction(
         specialist_name="Strategic Planner",
@@ -279,7 +368,7 @@ planner_agent = Agent(
 # Researcher Agent
 researcher_agent = Agent(
     name="Researcher",
-    model=researcher_config, # Use configured Google model
+    model=researcher_config, # Use specific config
     description="Gathers and validates information, highlighting conflicts and uncertainties.",
     instruction=_create_agent_instruction(
         specialist_name="Information Gatherer",
@@ -299,7 +388,7 @@ researcher_agent = Agent(
 # Analyzer Agent
 analyzer_agent = Agent(
     name="Analyzer",
-    model=analyzer_synth_config, # Use configured Google model
+    model=analyzer_config, # Use specific config
     description="Performs analysis, identifying inconsistencies and assumptions, and provides a structured evaluation score.",
     instruction=_create_agent_instruction(
         specialist_name="Core Analyst",
@@ -319,7 +408,7 @@ analyzer_agent = Agent(
 # Critic Agent
 critic_agent = Agent(
     name="Critic",
-    model=root_planner_critic_config, # Use configured Google model
+    model=critic_config, # Use specific config
     description="Critically evaluates ideas, identifies flaws, MUST suggest alternatives/revisions, and provides a structured evaluation score.",
     instruction=_create_agent_instruction(
         specialist_name="Quality Controller (Critic)",
@@ -340,7 +429,7 @@ critic_agent = Agent(
 # Synthesizer Agent
 synthesizer_agent = Agent(
     name="Synthesizer",
-    model=analyzer_synth_config, # Use configured Google model
+    model=synthesizer_config, # Use specific config
     description="Integrates information or forms conclusions based on delegated synthesis sub-tasks.",
     instruction=_create_agent_instruction(
         specialist_name="Integration Specialist",
@@ -384,6 +473,12 @@ class ToTBeamSearchCoordinator(BaseAgent):
     max_depth: int = Field(default=5, description="Maximum depth of the tree to explore.")
     model: LlmAgent | LiteLlm | str 
 
+    # --- Added for Rate Limiting ---
+    use_free_tier_rate_limiting: bool = Field(default=False, description="Enable rate limiting for Google AI Studio free tier.")
+    free_tier_sleep_seconds: float = Field(default=2.0, description="Seconds to sleep between calls when rate limiting.")
+    use_vertex_ai: bool = Field(default=False, description="Whether Vertex AI is configured.")
+    # --- End Rate Limiting Fields ---
+
     # model_config allows setting Pydantic configurations if needed
     model_config = {"arbitrary_types_allowed": True}
 
@@ -415,6 +510,16 @@ class ToTBeamSearchCoordinator(BaseAgent):
             max_depth: Maximum search depth.
             model: Optional model for the coordinator itself.
         """
+        # --- Read Rate Limiting Env Vars (overriding defaults if set) --- 
+        use_free_tier_rate_limiting_env = os.environ.get("USE_FREE_TIER_RATE_LIMITING", "false").lower() == "true"
+        try:
+            free_tier_sleep_seconds_env = float(os.environ.get("FREE_TIER_SLEEP_SECONDS", "2.0"))
+        except ValueError:
+            logger.warning(f"Invalid FREE_TIER_SLEEP_SECONDS value. Using default: 2.0")
+            free_tier_sleep_seconds_env = 2.0
+        use_vertex_ai_env = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+        # --- End Reading Env Vars ---
+
         # Define the sub_agents list for the framework - these are the agents
         # that this custom agent will directly invoke in its _run_async_impl
         sub_agents_list = [
@@ -426,6 +531,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
         ]
         
         # Call super().__init__() with all required parameters
+        # Pass the values read from environment or defaults to super init
         super().__init__(
             name=name,
             description=f"Tree of Thoughts Beam Search (width={beam_width}, depth={max_depth})",
@@ -438,6 +544,11 @@ class ToTBeamSearchCoordinator(BaseAgent):
             validator=validator,
             beam_width=beam_width,
             max_depth=max_depth,
+            # Pass rate limiting settings to BaseAgent (optional, for potential future use)
+            # Note: BaseAgent itself doesn't use these currently, but good practice
+            use_free_tier_rate_limiting=use_free_tier_rate_limiting_env,
+            free_tier_sleep_seconds=free_tier_sleep_seconds_env,
+            use_vertex_ai=use_vertex_ai_env, # Pass Vertex status too
             sub_agents=sub_agents_list,  # Pass the explicit sub_agents list
         )
         
@@ -508,6 +619,18 @@ class ToTBeamSearchCoordinator(BaseAgent):
         Yields:
             Valid events from the sub-agent.
         """
+        # --- Rate Limiting Check --- 
+        # Check if rate limiting is enabled AND this agent uses Google AI Studio (not Vertex)
+        is_google_studio_model = (isinstance(agent.model, str) and # It's a Google model name (string)
+                                not self.use_vertex_ai)           # And we are NOT using Vertex AI
+
+        if self.use_free_tier_rate_limiting and is_google_studio_model:
+            sleep_duration = self.free_tier_sleep_seconds
+            logger.info(f"[{self.name}] Rate limit active: Sleeping for {sleep_duration:.1f}s before calling {agent.name} (Google AI Studio model)")
+            time.sleep(sleep_duration)
+        # --- End Rate Limiting Check ---
+
+        # Now call the agent
         async for event in agent.run_async(ctx):
             # --- FIX: Check for role attribute before accessing --- 
             if hasattr(event, 'role') and event.role == 'model':
@@ -1309,7 +1432,7 @@ root_agent = ToTBeamSearchCoordinator(
     validator=validator_tool,
     beam_width=int(os.environ.get("BEAM_WIDTH", 3)),
     max_depth=int(os.environ.get("MAX_DEPTH", 5)),
-    model=root_planner_critic_config,
+    model=coordinator_config, # Use the specific Coordinator config
 )
 
 # Log the agent creation
