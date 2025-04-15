@@ -1,67 +1,68 @@
-import os  # Added for environment variables
-import logging # Import logging
-import re # Import regex for score extraction
-import time # Import time for rate limiting sleep
+import os  # Environment variable access
+import logging # Standard logging library
+import re # Regular expressions for score parsing
+import time # Time library for rate limiting delays
 from datetime import datetime
-from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple # Add Tuple
+from typing import Any, Dict, List, Optional, AsyncGenerator, Tuple
 
-from google.genai import types # Import for Event content
+from google.genai import types # Google AI types for Event content
 
 from google.adk.agents import Agent, BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.agents.llm_agent import LlmAgent # Import LlmAgent explicitly for type hint
-from google.adk.tools import google_search, FunctionTool # Add FunctionTool
+from google.adk.agents.llm_agent import LlmAgent # Explicit import for LlmAgent type hint
+from google.adk.tools import google_search, FunctionTool
 from google.adk.tools.agent_tool import AgentTool
-from google.adk.models.lite_llm import LiteLlm  # Add LiteLlm for OpenRouter access
-from google.adk.events import Event # Add Event
-from typing_extensions import override # Add override
+from google.adk.models.lite_llm import LiteLlm  # For using OpenRouter models
+from google.adk.events import Event
+from typing_extensions import override
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     ValidationError,
     field_validator,
-    model_validator,
 )
 
-# Configure logging
+# --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Thought Data Model (Used for Tool Argument Validation and Typing) ---
+# --- Thought Data Model ---
 
 class ThoughtData(BaseModel):
     """
-    Represents the data structure for a single thought (node) in the Tree of Thoughts.
-    Used to validate arguments for the 'register_thought_node' tool.
-    Ensures consistency and structure in the thought metadata managed by the Coordinator.
+    Data model for a single node in the Tree of Thoughts.
+
+    Used for validating arguments passed to the thought registration/validation tool.
+    Ensures consistency and structural integrity of metadata for each thought node
+    managed by the Coordinator agent.
     """
-    parentId: Optional[str] = Field( # Use string ID for flexibility
+    parentId: Optional[str] = Field(
         None,
-        description="The ID of the parent thought node in the tree. None for the root."
+        description="ID of the parent thought node. Null for the root node."
     )
-    thoughtId: str = Field( # Add explicit ID
+    thoughtId: str = Field(
         ...,
-        description="A unique identifier for this thought node (e.g., 'node-0', 'node-1a', 'node-1b')."
+        description="Unique identifier for this thought node (e.g., 'node-0', 'node-1a')."
     )
     thought: str = Field(
         ...,
-        description="The core content of the current thought/step (e.g., 'Hypothesize strategy A', 'Evaluate feasibility of strategy A', 'Generate sub-steps for strategy A').",
+        description="Core content of the current thought/step.",
         min_length=1
     )
-    # Removed thoughtNumber, totalThoughts, nextThoughtNeeded - managed by search strategy
-    # Removed isRevision, revisesThought, branchFromThought, branchId - handled by tree structure (parentId)
+    # Score assigned by the evaluation process (higher is better)
     evaluationScore: Optional[float] = Field(
         None,
-        description="A score assigned by the evaluation process, indicating the promise of this thought path (higher is better)."
+        description="Score reflecting the promise of this thought path (0-10)."
     )
     status: str = Field(
-        "active", # Default status
-        description="The current status of this thought node (e.g., 'active', 'evaluated', 'promising', 'pruned', 'solution')."
+        "active",
+        description="Current status (e.g., 'active', 'evaluated', 'pruned')."
     )
-    depth: int = Field( # Track depth for search strategies
+    # Depth of this node in the tree (root is 0)
+    depth: int = Field(
         ...,
-        description="The depth of this node in the tree (root is 0).",
+        description="Node depth in the tree, starting from 0 for the root.",
         ge=0
     )
 
@@ -73,20 +74,21 @@ class ThoughtData(BaseModel):
     )
 
     # --- Validators ---
-    # Simplified validators - complex relations handled by Coordinator logic
     @field_validator('parentId')
     @classmethod
     def validate_parent_id_format(cls, v: Optional[str]) -> Optional[str]:
-        # Basic format check - could be more complex if needed
+        # Basic check for parent ID format
         if v is not None and not isinstance(v, str):
             raise ValueError('parentId must be a string if set')
         return v
 
     def dict(self) -> Dict[str, Any]:
-        """Convert thought data to dictionary format for serialization"""
+        """Convert thought data to a dictionary for serialization."""
         return self.model_dump(exclude_none=True)
 
 # --- Sequential Thinking Tool renamed and repurposed ---
+# The original Sequential Thinking Tool has been adapted to serve as a
+# validator for thought node metadata within the ToT framework.
 
 def validate_thought_node_data(
     parentId: Optional[str],
@@ -97,24 +99,25 @@ def validate_thought_node_data(
     status: str = "active"
 ) -> Dict[str, Any]:
     """
-    Validates metadata for a single node in the Tree of Thoughts.
+    Validate metadata for a single node in the Tree of Thoughts.
 
-    This tool acts as a validation layer for thought node metadata before the
-    Coordinator adds it to the tree state. It does not perform the thinking
-    or manage the tree structure itself; state is managed by the calling Coordinator.
-    It ensures the basic structure and required fields are present.
+    This function acts as a validation layer before the Coordinator adds a node
+    to the thought tree. It uses the ThoughtData model to ensure data integrity.
+    It does NOT perform the thinking or manage the tree structure itself;
+    that responsibility lies with the calling Coordinator agent.
 
     Args:
-        parentId: The ID of the parent thought node. None for the root node only.
-        thoughtId: A unique ID for this new thought node.
-        thought: The core content/idea of this thought node.
-        depth: The depth of this node in the tree (root=0).
-        evaluationScore: Optional score from evaluation (higher is better).
-        status: The initial status of the node (default: 'active').
+        parentId (Optional[str]): ID of the parent node (None for root)
+        thoughtId (str): Unique ID for this new thought node
+        thought (str): Core content/idea of this thought node
+        depth (int): Depth of this node in the tree (root=0)
+        evaluationScore (Optional[float]): Initial evaluation score (optional)
+        status (str): Initial status of the node (default: 'active')
 
     Returns:
-        A dictionary containing the validated thought node metadata if successful,
-        or an error dictionary if validation fails. Contains a 'validation_status' key.
+        Dict[str, Any]: Dictionary containing validated metadata if successful,
+                        or an error dictionary if validation fails.
+                        Includes 'validation_status' key.
     """
     try:
         # Ensure critical params are provided
@@ -175,38 +178,44 @@ def validate_thought_node_data(
 # --- Model Configuration ---
 
 def _configure_llm_models() -> Tuple[
-    # Return types for Planner, Researcher, Analyzer, Critic, Synthesizer
+    # Planner, Researcher, Analyzer, Critic, Synthesizer, Coordinator
     str | LiteLlm,
     str | LiteLlm,
     str | LiteLlm,
     str | LiteLlm,
     str | LiteLlm,
-    str | LiteLlm, # Add Coordinator config type
+    str | LiteLlm,
 ]:
     """
-    Configures LLM models for each specialist agent based on environment variables.
+    Configure LLM models for each specialist agent and the coordinator.
 
-    Reads environment variables in the format: <AGENT_NAME>_MODEL_CONFIG=provider:model_name
-    Example: PLANNER_MODEL_CONFIG=openrouter:google/gemini-2.5-pro-preview-03-25
-             RESEARCHER_MODEL_CONFIG=google:gemini-2.0-flash
-
+    Reads configurations from environment variables (e.g., PLANNER_MODEL_CONFIG=provider:model_name).
     Supported providers: 'google', 'openrouter'.
-    Falls back to a default Google model if the variable is not set, invalid,
-    or if OpenRouter is specified without an API key.
+
+    Falls back to a default Google model if:
+    - Environment variable is not set or invalid
+    - OpenRouter is specified without an API key
+
+    Environment Variables:
+    - <AGENT_NAME>_MODEL_CONFIG: Specifies provider and model (e.g., "openrouter:google/gemini-2.5-pro")
+    - GOOGLE_GENAI_USE_VERTEXAI: Set to "true" to use Vertex AI (requires GOOGLE_CLOUD_PROJECT/LOCATION)
+    - OPENROUTER_API_KEY: Required for OpenRouter models
+    - GOOGLE_API_KEY: Required for Google AI Studio models
+    - GOOGLE_CLOUD_PROJECT: Required for Vertex AI
+    - GOOGLE_CLOUD_LOCATION: Required for Vertex AI
 
     Returns:
-        A tuple containing the model configurations for:
-        (Planner, Researcher, Analyzer, Critic, Synthesizer)
-        (Planner, Researcher, Analyzer, Critic, Synthesizer, Coordinator)
+        Tuple[str | LiteLlm, ...]: A tuple containing model configurations for
+                                  (Planner, Researcher, Analyzer, Critic, Synthesizer, Coordinator)
     """
-    # --- Default Model ---
+    # Default Google model if no specific configuration is found
     default_google_model = "gemini-2.0-flash"
 
-    # --- Environment Flags ---
+    # Flags for API usage (Vertex vs Google AI Studio)
     use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
 
-    # --- Agent Names (Order matters for return tuple) ---
+    # Agent names must match the order in the return tuple
     agent_names = ["planner", "researcher", "analyzer", "critic", "synthesizer", "coordinator"]
     agent_configs: Dict[str, str | LiteLlm] = {}
 
@@ -215,94 +224,52 @@ def _configure_llm_models() -> Tuple[
     for agent_name in agent_names:
         env_var_name = f"{agent_name.upper()}_MODEL_CONFIG"
         config_str = os.environ.get(env_var_name)
-        final_config: str | LiteLlm = default_google_model # Start with default
+        final_config: str | LiteLlm = default_google_model # Default config
 
         if config_str:
             logger.info(f"Found config for {agent_name.capitalize()} from {env_var_name}: '{config_str}'")
             try:
-                parts = config_str.split(":", 1)
-                if len(parts) == 2:
-                    provider, model_name = parts[0].lower().strip(), parts[1].strip()
+                provider, model_name = config_str.strip().split(":", 1)
+                provider = provider.lower()
 
-                    if provider == "openrouter":
-                        if openrouter_key:
-                            try:
-                                final_config = LiteLlm(model=model_name)
-                                logger.info(f"  -> Configured {agent_name.capitalize()} for OpenRouter: {model_name}")
-                            except Exception as e:
-                                logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} ({model_name}): {e}. Falling back to default Google model ({default_google_model}).")
-                                final_config = default_google_model # Fallback
-                                # Log Google warnings for the fallback model
-                                if use_vertex:
-                                     if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                                          logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                                else:
-                                     if not os.environ.get("GOOGLE_API_KEY"):
-                                          logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
-                        else:
-                            logger.warning(f"  -> OpenRouter specified for {agent_name.capitalize()} ('{model_name}'), but OPENROUTER_API_KEY not found. Falling back to default Google model ({default_google_model}).")
+                if provider == "openrouter":
+                    if openrouter_key:
+                        try:
+                            final_config = LiteLlm(model=model_name)
+                            logger.info(f"  -> Configured {agent_name.capitalize()} for OpenRouter: {model_name}")
+                        except Exception as e:
+                            logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} ({model_name}): {e}. Falling back to default ({default_google_model}).")
                             final_config = default_google_model # Fallback
-                            # Log Google warnings for the fallback model
-                            if use_vertex:
-                                 if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                                      logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                            else:
-                                 if not os.environ.get("GOOGLE_API_KEY"):
-                                      logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
-
-                    elif provider == "google":
-                        final_config = model_name
-                        logger.info(f"  -> Configured {agent_name.capitalize()} for Google model: {model_name}")
-                        # Log Google credential warnings
-                        if use_vertex:
-                             if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                                  logger.warning(f"     (Using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                        else:
-                             if not os.environ.get("GOOGLE_API_KEY"):
-                                  logger.warning(f"     (Using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                            # Log fallback credential warnings
+                            _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
                     else:
-                        logger.warning(f"  -> Invalid provider '{provider}' in {env_var_name}. Falling back to default Google model ({default_google_model}).")
+                        logger.warning(f"  -> OpenRouter specified for {agent_name.capitalize()} ('{model_name}'), but OPENROUTER_API_KEY not found. Falling back to default ({default_google_model}).")
                         final_config = default_google_model # Fallback
-                        # Log Google warnings for the fallback model
-                        if use_vertex:
-                             if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                                  logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                        else:
-                             if not os.environ.get("GOOGLE_API_KEY"):
-                                  logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                        _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
 
+                elif provider == "google":
+                    final_config = model_name
+                    logger.info(f"  -> Configured {agent_name.capitalize()} for Google model: {model_name}")
+                    _log_google_credential_warnings(use_vertex, model_name)
                 else:
-                    logger.warning(f"  -> Invalid format in {env_var_name} (expected 'provider:model_name'). Falling back to default Google model ({default_google_model}).")
+                    logger.warning(f"  -> Invalid provider '{provider}' in {env_var_name}. Falling back to default ({default_google_model}).")
                     final_config = default_google_model # Fallback
-                    # Log Google warnings for the fallback model
-                    if use_vertex:
-                         if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                              logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                    else:
-                         if not os.environ.get("GOOGLE_API_KEY"):
-                              logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                    _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
+
+            except ValueError:
+                logger.warning(f"  -> Invalid format in {env_var_name} (expected 'provider:model_name'). Falling back to default ({default_google_model}).")
+                final_config = default_google_model # Fallback
+                _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
             except Exception as e:
-                 logger.error(f"  -> Error processing {env_var_name} ('{config_str}'): {e}. Falling back to default Google model ({default_google_model}).")
-                 final_config = default_google_model # Fallback on any unexpected error
-                 # Log Google warnings for the fallback model
-                 if use_vertex:
-                      if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                           logger.warning(f"     (Fallback Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-                 else:
-                      if not os.environ.get("GOOGLE_API_KEY"):
-                           logger.warning(f"     (Fallback Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+                 logger.error(f"  -> Error processing {env_var_name} ('{config_str}'): {e}. Falling back to default ({default_google_model}).")
+                 final_config = default_google_model # Fallback
+                 _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
 
         else:
             # Environment variable not set, use default
             logger.info(f"{agent_name.capitalize()} using default Google model: {default_google_model} (set {env_var_name} to override).")
             final_config = default_google_model
-             # Log Google credential warnings for the default model
-            if use_vertex:
-                 if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
-                      logger.warning(f"  (Default Google model '{default_google_model}' using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
-            else:
-                 if not os.environ.get("GOOGLE_API_KEY"):
-                      logger.warning(f"  (Default Google model '{default_google_model}' using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+            _log_google_credential_warnings(use_vertex, default_google_model)
 
         agent_configs[agent_name] = final_config
 
@@ -315,27 +282,51 @@ def _configure_llm_models() -> Tuple[
         agent_configs["analyzer"],
         agent_configs["critic"],
         agent_configs["synthesizer"],
-        agent_configs["coordinator"], # Add Coordinator config to return tuple
+        agent_configs["coordinator"],
     )
 
-# Get individual model configurations
+# --- Helper for Credential Warnings ---
+def _log_google_credential_warnings(use_vertex: bool, model_name: str, is_fallback: bool = False):
+    """Logs warnings if required Google credentials are missing."""
+    prefix = f"     ({'Fallback ' if is_fallback else ''}Google model '{model_name}' "
+    if use_vertex:
+        if not os.environ.get("GOOGLE_CLOUD_PROJECT") or not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+            logger.warning(f"{prefix}using Vertex AI, but GOOGLE_CLOUD_PROJECT or GOOGLE_CLOUD_LOCATION env vars not set.)")
+    else:
+        if not os.environ.get("GOOGLE_API_KEY"):
+            logger.warning(f"{prefix}using Google AI Studio, but GOOGLE_API_KEY env var not set.)")
+
+# --- Specialist Agent Definitions ---
+# These agents perform specific sub-tasks delegated by the ToT Coordinator.
+# They operate based on their assigned instructions and configured models.
+# Tools can be added to enhance their capabilities (e.g., google_search for Researcher).
+
+# Get individual model configurations immediately before use
 (
     planner_config,
     researcher_config,
     analyzer_config,
     critic_config,
     synthesizer_config,
-    coordinator_config, # Unpack Coordinator config
+    coordinator_config,
 ) = _configure_llm_models()
-
-# --- Specialist Agent Definitions ---
-# Note: For simplicity, these agents currently have no specific tools assigned.
-# They rely solely on their instructions and the LLM's capabilities.
-# You can add FunctionTool, APIHubToolset, etc., to them as needed.
 
 # Helper to create standard instructions
 def _create_agent_instruction(specialist_name: str, core_task: str, extra_guidance: List[str] = []) -> str:
-    """Creates a standardized instruction string for specialist agents."""
+    """
+    Create a standardized instruction string for specialist agents.
+
+    This helper ensures consistent formatting and includes common elements
+    like the current date/time and the agent's role.
+
+    Args:
+        specialist_name (str): Name of the specialist agent (e.g., "Strategic Planner")
+        core_task (str): Primary task description for the agent
+        extra_guidance (List[str], optional): Additional instructions or constraints
+
+    Returns:
+        str: Formatted instruction string with newlines escaped for ADK
+    """
     base_instruction = [
         f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n",
         f"You are the {specialist_name} specialist.\\n",
@@ -450,20 +441,33 @@ synthesizer_agent = Agent(
 
 class ToTBeamSearchCoordinator(BaseAgent):
     """
-    Orchestrates a Tree-of-Thought (ToT) workflow using Beam Search.
+    Tree of Thoughts (ToT) Coordinator with Beam Search Implementation.
 
-    Manages the execution flow, state (thought_tree, active_beam, workflow_phase),
-    and calls specialist LLM agents (Planner, Analyzer, Critic, Synthesizer)
-    as tools to perform specific tasks within the algorithm.
-    
-    This is a Custom Agent implementation that directly inherits from BaseAgent
-    and implements custom orchestration logic in _run_async_impl.
+    This coordinator orchestrates a multi-agent workflow using Tree of Thoughts (ToT) 
+    methodology combined with Beam Search for efficient exploration of solution spaces.
+
+    Key Components:
+    - Tree Management: Maintains a tree structure where each node represents a thought/step
+    - Beam Search: Keeps track of k most promising nodes at each level
+    - State Management: Handles thought_tree, active_beam, and workflow phases
+    - Agent Coordination: Delegates tasks to specialist agents (Planner, Researcher, etc.)
+
+    Workflow Phases:
+    1. Initialization: Create root node and generate initial strategies
+    2. Main Loop: 
+       - Generate candidate thoughts from active beam
+       - Evaluate thoughts using research, analysis, and critique
+       - Select best k nodes for next beam
+    3. Synthesis: Generate final result from best path
+
+    The coordinator ensures robust error handling, logging, and state management
+    throughout the workflow execution.
     """
 
     # --- Field Declarations for Pydantic ---
     # Declare sub-agents and tools as instance attributes with type hints
     planner: LlmAgent
-    researcher: LlmAgent # Add researcher agent
+    researcher: LlmAgent  # Research agent for information gathering
     analyzer: LlmAgent
     critic: LlmAgent
     synthesizer: LlmAgent
@@ -473,20 +477,20 @@ class ToTBeamSearchCoordinator(BaseAgent):
     max_depth: int = Field(default=5, description="Maximum depth of the tree to explore.")
     model: LlmAgent | LiteLlm | str 
 
-    # --- Added for Rate Limiting ---
+    # --- Rate Limiting Configuration ---
     use_free_tier_rate_limiting: bool = Field(default=False, description="Enable rate limiting for Google AI Studio free tier.")
     free_tier_sleep_seconds: float = Field(default=2.0, description="Seconds to sleep between calls when rate limiting.")
     use_vertex_ai: bool = Field(default=False, description="Whether Vertex AI is configured.")
     # --- End Rate Limiting Fields ---
 
-    # model_config allows setting Pydantic configurations if needed
+    # Allow arbitrary types in Pydantic model
     model_config = {"arbitrary_types_allowed": True}
 
     def __init__(
         self,
         name: str,
         planner: LlmAgent,
-        researcher: LlmAgent, # Add researcher parameter
+        researcher: LlmAgent,
         analyzer: LlmAgent,
         critic: LlmAgent,
         synthesizer: LlmAgent,
@@ -496,19 +500,27 @@ class ToTBeamSearchCoordinator(BaseAgent):
         model: LlmAgent | LiteLlm | str = None,
     ):
         """
-        Initializes the ToTBeamSearchCoordinator.
+        Initialize the Tree of Thoughts Beam Search Coordinator.
+
+        This coordinator manages a team of specialist agents to explore and solve complex problems
+        using a tree-based approach with beam search optimization.
 
         Args:
-            name: The name of the agent.
-            planner: LlmAgent for generating thoughts/strategies.
-            researcher: LlmAgent for gathering information about thoughts. # Add description
-            analyzer: LlmAgent for analyzing thought soundness.
-            critic: LlmAgent for critiquing thoughts.
-            synthesizer: LlmAgent for synthesizing final results.
-            validator: FunctionTool for validating thought data.
-            beam_width: Number of nodes to keep in the beam (k).
-            max_depth: Maximum search depth.
-            model: Optional model for the coordinator itself.
+            name (str): Identifier for this coordinator instance
+            planner (LlmAgent): Agent responsible for generating strategic thoughts and next steps
+            researcher (LlmAgent): Agent for gathering and validating information about thoughts
+            analyzer (LlmAgent): Agent for evaluating thought soundness and feasibility
+            critic (LlmAgent): Agent for identifying flaws and suggesting improvements
+            synthesizer (LlmAgent): Agent for combining information and generating final results
+            validator (FunctionTool): Tool for validating thought node data structure
+            beam_width (int, optional): Number of top nodes to maintain in beam. Defaults to 3
+            max_depth (int, optional): Maximum depth to explore in thought tree. Defaults to 5
+            model (Union[LlmAgent, LiteLlm, str], optional): Model for coordinator's own processing. Defaults to None
+
+        Configuration:
+            - Rate limiting and API configurations are read from environment variables
+            - Sub-agents are organized into a framework-compatible list
+            - State management tools are initialized for tracking the thought tree
         """
         # --- Read Rate Limiting Env Vars (overriding defaults if set) --- 
         use_free_tier_rate_limiting_env = os.environ.get("USE_FREE_TIER_RATE_LIMITING", "false").lower() == "true"
@@ -544,8 +556,6 @@ class ToTBeamSearchCoordinator(BaseAgent):
             validator=validator,
             beam_width=beam_width,
             max_depth=max_depth,
-            # Pass rate limiting settings to BaseAgent (optional, for potential future use)
-            # Note: BaseAgent itself doesn't use these currently, but good practice
             use_free_tier_rate_limiting=use_free_tier_rate_limiting_env,
             free_tier_sleep_seconds=free_tier_sleep_seconds_env,
             use_vertex_ai=use_vertex_ai_env, # Pass Vertex status too
@@ -557,27 +567,82 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
     # --- Helper methods for state management ---
     def _get_state_value(self, ctx: InvocationContext, key: str, default: Any = None) -> Any:
-        """Safely gets a value from session state."""
+        """
+        Safely retrieve a value from the session state.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+            key (str): Key to retrieve from state
+            default (Any, optional): Default value if key not found. Defaults to None
+
+        Returns:
+            Any: Retrieved value or default if not found
+        """
         return ctx.session.state.get(key, default)
 
     def _set_state_value(self, ctx: InvocationContext, key: str, value: Any):
-        """Sets a value in session state."""
+        """
+        Set a value in the session state.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+            key (str): Key to store value under
+            value (Any): Value to store
+        """
         ctx.session.state[key] = value
 
     def _get_thought_tree(self, ctx: InvocationContext) -> Dict[str, Any]:
-        """Gets the thought tree from state, initializing if necessary."""
+        """
+        Retrieve the thought tree from state, initializing if not present.
+
+        The thought tree is a dictionary storing all nodes and their relationships,
+        representing the current state of problem exploration.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Returns:
+            Dict[str, Any]: The thought tree structure
+        """
         return ctx.session.state.setdefault("thought_tree", {})
 
     def _get_active_beam(self, ctx: InvocationContext) -> List[str]:
-        """Gets the active beam from state, initializing if necessary."""
+        """
+        Retrieve the active beam from state, initializing if not present.
+
+        The active beam contains IDs of the current most promising nodes
+        being explored in the beam search process.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Returns:
+            List[str]: List of node IDs in the current beam
+        """
         return ctx.session.state.setdefault("active_beam", [])
 
     def _set_active_beam(self, ctx: InvocationContext, beam: List[str]):
-        """Sets the active beam in state."""
+        """
+        Update the active beam in state.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+            beam (List[str]): New list of node IDs to set as active beam
+        """
         self._set_state_value(ctx, "active_beam", beam)
         
     def _update_node(self, ctx: InvocationContext, node_id: str, data: Dict[str, Any]):
-        """Updates a node in the thought tree."""
+        """
+        Update a node's data in the thought tree.
+
+        This method handles both creating new nodes and updating existing ones,
+        ensuring that existing data is properly merged with updates.
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+            node_id (str): Identifier of the node to update
+            data (Dict[str, Any]): New data to merge into the node
+        """
         tree = self._get_thought_tree(ctx)
         if node_id in tree:
             # Ensure existing data isn't completely overwritten if not present in new data
@@ -589,8 +654,19 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
     # --- Helper method for score extraction ---
     def _extract_score(self, text: str) -> Optional[float]:
-        """Extracts evaluation score from text."""
-        if not isinstance(text, str): # Add robustness
+        """
+        Extract evaluation score from agent output text.
+
+        Looks for patterns like 'Evaluation Score: X/10' and converts to float.
+        Includes validation and error handling for robustness.
+
+        Args:
+            text (str): Text to extract score from
+
+        Returns:
+            Optional[float]: Extracted score between 0-10, or None if not found/invalid
+        """
+        if not isinstance(text, str):
             return None
         match = re.search(r"Evaluation Score:\s*(\d{1,2}(?:\.\d+)?)/10", text)
         if match:
@@ -610,61 +686,80 @@ class ToTBeamSearchCoordinator(BaseAgent):
     # --- Helper method to safely run Sub Agents and filter empty model events ---
     async def _run_sub_agent_safely(self, agent: LlmAgent, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
-        Wraps a sub-agent call to filter out model events with empty parts.
+        Safely execute a sub-agent while handling rate limits and filtering empty events.
+
+        This wrapper provides:
+        1. Rate limiting for free tier API usage
+        2. Empty event filtering to prevent history pollution
+        3. Consistent event handling across all agent types
 
         Args:
-            agent: The LlmAgent instance to run (e.g., self.planner, self.researcher).
-            ctx: The InvocationContext.
+            agent (LlmAgent): The specialist agent to run
+            ctx (InvocationContext): Current invocation context
 
         Yields:
-            Valid events from the sub-agent.
+            Event: Valid events from the sub-agent execution
+
+        Note:
+            Rate limiting is only applied for Google AI Studio models when enabled
         """
         # --- Rate Limiting Check --- 
-        # Check if rate limiting is enabled AND this agent uses Google AI Studio (not Vertex)
-        is_google_studio_model = (isinstance(agent.model, str) and # It's a Google model name (string)
-                                not self.use_vertex_ai)           # And we are NOT using Vertex AI
+        is_google_studio_model = (isinstance(agent.model, str) and 
+                                not self.use_vertex_ai)
 
         if self.use_free_tier_rate_limiting and is_google_studio_model:
             sleep_duration = self.free_tier_sleep_seconds
-            logger.info(f"[{self.name}] Rate limit active: Sleeping for {sleep_duration:.1f}s before calling {agent.name} (Google AI Studio model)")
+            logger.info(f"[{self.name}] Rate limit active: Sleeping for {sleep_duration:.1f}s before calling {agent.name}")
             time.sleep(sleep_duration)
-        # --- End Rate Limiting Check ---
 
-        # Now call the agent
+        # Execute agent and handle events
         async for event in agent.run_async(ctx):
-            # --- FIX: Check for role attribute before accessing --- 
             if hasattr(event, 'role') and event.role == 'model':
-                # Now safe to check content and parts for model role
                 is_empty_model_event = (
                     event.content and
                     not event.content.parts
                 )
                 if is_empty_model_event:
-                    logger.warning(f"[{self.name}] Filtering empty model event from {agent.name} response to prevent history pollution.")
-                    continue # Skip yielding this event
-            # --- END FIX ---
-            
-            # Yield all other events (user, tool_code, tool_calls, valid model) 
-            # or events without a role attribute
-            yield event 
+                    logger.warning(f"[{self.name}] Filtering empty model event from {agent.name}")
+                    continue
+
+            yield event
 
     # --- Core Execution Logic ---
     @override
-    async def _run_async_impl(
-        self, ctx: InvocationContext
-    ) -> AsyncGenerator[Event, None]:
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
-        Implements the ToT Beam Search algorithm orchestration.
-        
-        Similar to the StoryFlowAgent example, we use a clear step-by-step workflow:
-        1. Initialize the tree (generate root and initial nodes)
-        2. Then enter the main beam search loop:
-           a. Generate candidate thoughts
-           b. Evaluate those thoughts
-           c. Select the best (beam) nodes
-        3. Finally, synthesize results from the best path
-        
-        We also include conditional logic for handling edge cases and errors.
+        Execute the Tree of Thoughts beam search algorithm.
+
+        This is the main orchestration method that implements the complete workflow:
+
+        Phase 1 - Initialization:
+        - Create root node from initial problem
+        - Generate and validate initial strategy nodes
+        - Set up initial beam with most promising strategies
+
+        Phase 2 - Main Search Loop:
+        - For each iteration (up to max_depth):
+          a. Generate next thoughts from active beam nodes
+          b. Research and evaluate generated thoughts
+          c. Select top-k thoughts for next beam
+          d. Update node statuses (active/pruned)
+        - Stop if beam empty or max depth reached
+
+        Phase 3 - Synthesis:
+        - Identify best path through tree
+        - Generate final answer using path context
+        - Handle any errors and provide meaningful output
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Yields:
+            Event: Progress updates and final results through events
+
+        Note:
+            The method maintains detailed logging throughout execution
+            and handles error cases gracefully at each phase.
         """
         logger.info(f"[{self.name}] Starting Tree of Thoughts workflow.")
         
@@ -787,14 +882,30 @@ class ToTBeamSearchCoordinator(BaseAgent):
     # --- Initialization Step (Modified Planner Interaction) ---
     async def _initialize_workflow(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
-        Initializes the thought tree with a root node and generates initial STRATEGIES.
+        Initialize the thought tree and generate initial strategies.
 
-        This helper method demonstrates:
-        1. How to call the validator tool and handle its response
-        2. How to call a sub-agent (planner) to generate distinct strategies
-        3. How to manage state through the ctx.session.state dictionary
+        This method performs the critical setup phase:
+        1. Create and validate root node from initial problem
+        2. Generate distinct high-level strategies using Planner agent
+        3. Validate and add strategy nodes as children of root
+        4. Handle existing tree state and error cases
 
-        Stores the generated initial node IDs in ctx.session.state['_initialize_workflow_result']
+        Implementation Details:
+        - Uses validator tool to ensure node data integrity
+        - Implements robust parsing of Planner output with fallbacks
+        - Maintains detailed logging of the initialization process
+        - Stores results in session state for subsequent phases
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Yields:
+            Event: Validation and initialization progress events
+
+        State Updates:
+            - '_initialize_workflow_result': List of generated node IDs
+            - 'initial_problem': The root problem being solved
+            - Updates thought tree with root and strategy nodes
         """
         logger.info(f"[{self.name}] Initializing workflow.")
         self._set_state_value(ctx, '_initialize_workflow_result', [])
@@ -927,26 +1038,47 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
     # --- Generation Step ---
     async def _generate_next_thoughts(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
-        """Generates candidate thoughts for the next level based on the active beam.
+        """
+        Generate next level of thoughts from current active beam nodes.
 
-        Stores the newly generated node IDs in ctx.session.state['_generate_next_thoughts_result']
-        before returning.
+        This method implements the expansion phase of beam search:
+        1. Process each node in active beam
+        2. Use dynamic generation count based on node scores and depth
+        3. Generate and validate child thoughts for each active node
+        4. Store results for evaluation phase
+
+        Key Features:
+        - Dynamic generation count adjusts based on:
+          - Parent node's evaluation score
+          - Current depth in tree
+          - Base beam width parameter
+        - Implements depth checking to respect max_depth
+        - Maintains node relationships in tree structure
+        - Handles validation and error cases for each generated thought
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Yields:
+            Event: Generation progress and validation events
+
+        State Updates:
+            - '_generate_next_thoughts_result': List of newly generated node IDs
+            - Updates thought tree with new child nodes
         """
         active_beam = self._get_active_beam(ctx)
         thought_tree = self._get_thought_tree(ctx)
         logger.info(f"[{self.name}] Starting Generation Step for beam: {active_beam}")
         newly_generated_ids_this_round = []
-        # Initialize result in state
         self._set_state_value(ctx, '_generate_next_thoughts_result', [])
 
         for parent_id in active_beam:
             parent_node = thought_tree.get(parent_id)
-            # Ensure node exists and is marked active (selected in previous step)
             if not parent_node or parent_node.get('status') != 'active':
                 logger.debug(f"[{self.name}] Skipping generation for non-active node: {parent_id}")
                 continue
 
-            parent_thought = parent_node.get("thoughtContent", "") # Get thought from validated data
+            parent_thought = parent_node.get("thoughtContent", "")
             parent_depth = parent_node.get("depth", 0)
 
             if parent_depth >= self.max_depth:
@@ -955,85 +1087,69 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
             logger.info(f"[{self.name}] Calling Planner to expand node: {parent_id} ('{parent_thought[:50]}...')")
             try:
-                # --- Dynamic Generation Count Logic --- 
-                # Base number of thoughts to generate
-                base_num_to_generate = self.beam_width 
-                
-                # Adjust based on parent node's score (if evaluated - might not be if coming from root)
+                # --- Dynamic Generation Count Logic ---
+                base_num_to_generate = self.beam_width
                 parent_score = parent_node.get("evaluationScore")
                 score_adjustment = 0
                 if parent_score is not None:
-                    if parent_score >= 8.0: # High score - explore more
+                    if parent_score >= 8.0:
                         score_adjustment = 1
-                    elif parent_score < 5.0: # Low score - explore less
+                    elif parent_score < 5.0:
                         score_adjustment = -1
                 
-                # Adjust based on depth (deeper nodes might need more focus)
                 depth_adjustment = 0
-                if parent_depth >= self.max_depth - 2: # Getting close to max depth
+                if parent_depth >= self.max_depth - 2:
                      depth_adjustment = -1
 
-                # Calculate final number, ensuring it's at least 1
                 num_to_generate = max(1, base_num_to_generate + score_adjustment + depth_adjustment)
                 logger.info(f"[{self.name}] Dynamically determined to generate {num_to_generate} thoughts for node {parent_id} (base={base_num_to_generate}, score_adj={score_adjustment}, depth_adj={depth_adjustment})")
-                # --- End Dynamic Generation Count Logic ---
 
-                # --- MODIFIED PLANNER INSTRUCTION for Expansion ---
-                # Use the dynamically calculated num_to_generate
+                # --- Instruction for expansion ---
                 planner_instruction = (
                     f"The current thought/strategy is: '{parent_thought}'. "
-                    f"It is at depth {parent_depth} and received a score of {parent_score if parent_score is not None else 'N/A'}. " # Add context
+                    f"It is at depth {parent_depth} and received a score of {parent_score if parent_score is not None else 'N/A'}. "
                     f"Based on this, generate exactly **{num_to_generate}** distinct and concrete **next steps, sub-topics, or specific questions** "
                     f"to explore *within* this thought. Focus on quality and relevance. "
                     f"List each clearly on a new line."
                 )
                 ctx.session.state["planner_instruction"] = planner_instruction
-                # --- END OF MODIFIED INSTRUCTION ---
                 
-                # Correct: Use async for to iterate over agent events
                 planner_output = ""
                 async for event in self._run_sub_agent_safely(self.planner, ctx):
-                    # Pass through the events from the planner
                     yield event
-                    # Extract output from the final event if possible
                     if event.content and event.content.parts:
-                        planner_output = event.content.parts[0].text # Accumulate or take last? Assume last for simplicity
+                        planner_output = event.content.parts[0].text
 
-                child_thoughts_text = planner_output # Use accumulated/final output
+                child_thoughts_text = planner_output
                 child_thoughts = [p.strip() for p in child_thoughts_text.split('\n') if p.strip()]
                 
-                # --- FIX: Enforce generation count --- 
+                # Enforce generation count
                 if len(child_thoughts) > num_to_generate:
                     logger.warning(f"[{self.name}] Planner returned {len(child_thoughts)} thoughts, exceeding request for {num_to_generate}. Truncating.")
                     child_thoughts = child_thoughts[:num_to_generate]
                 elif len(child_thoughts) < num_to_generate:
                      logger.warning(f"[{self.name}] Planner returned {len(child_thoughts)} thoughts, less than requested {num_to_generate}.")
-                # --- END FIX ---
 
                 if not child_thoughts:
                      logger.warning(f"[{self.name}] Planner returned no distinct thoughts for node {parent_id}. Output: {child_thoughts_text}")
                      continue
 
-                # --- FIX: Skip empty thoughts before validation --- 
+                # Skip empty thoughts before validation
                 for i, child_thought in enumerate(child_thoughts):
-                    if not child_thought: # Explicitly check for empty string AFTER strip
+                    if not child_thought:
                         logger.warning(f"[{self.name}] Skipping empty thought generated by Planner for parent {parent_id} at index {i}.")
-                        continue 
-                # --- END FIX ---
+                        continue
 
                 for i, child_thought in enumerate(child_thoughts):
-                    # Create a unique ID that avoids collisions if planner returns same thought multiple times
                     child_id = f"{parent_id}-gen{i}"
                     child_validation_args = {
                         "parentId": parent_id,
                         "thoughtId": child_id,
                         "thought": child_thought,
                         "depth": parent_depth + 1,
-                        "status": "generated", # Mark ready for evaluation
+                        "status": "generated",
                     }
-                    # Correct: await on FunctionTool.run_async
                     child_validation_result = await self.validator.run_async(tool_context=ctx, args=child_validation_args)
-                    # Create event properly for child validation result
                     yield Event(
                         author=self.validator.name,
                         invocation_id=ctx.invocation_id,
@@ -1065,17 +1181,39 @@ class ToTBeamSearchCoordinator(BaseAgent):
     # --- Evaluation Step (Modified) ---
     async def _evaluate_thoughts(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
-        Evaluates all thoughts currently marked as 'generated'. It now includes a research step.
+        Evaluate generated thoughts using research, analysis, and critique.
 
-        This helper method:
-        1. Finds all nodes with status 'generated'
-        2. Calls researcher for each node to gather information.
-        3. Calls analyzer and critic for each node, providing research context.
-        4. Combines scores and updates node status to 'evaluated'.
-        5. Stores evaluation results (including research) in session state.
+        This method implements a comprehensive evaluation process:
+        1. Research Phase:
+           - Gather relevant information for each thought
+           - Validate and contextualize findings
+        2. Analysis Phase:
+           - Evaluate soundness and feasibility
+           - Generate numerical scores (0-10)
+        3. Critique Phase:
+           - Identify potential issues and improvements
+           - Provide additional scoring perspective
+        4. Integration:
+           - Combine scores from different evaluators
+           - Update node status and store evaluation data
 
-        Stores the evaluated node data (list of dicts) in
-        ctx.session.state['_evaluate_thoughts_result']
+        Key Features:
+        - Multi-perspective evaluation using specialist agents
+        - Research-backed analysis for informed decisions
+        - Robust score extraction and combination
+        - Detailed logging of evaluation process
+        - Error handling for each evaluation step
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Yields:
+            Event: Research findings and evaluation progress events
+
+        State Updates:
+            - '_evaluate_thoughts_result': List of evaluated node data
+            - Updates thought tree with evaluation results
+            - Marks nodes as 'evaluated'
         """
         thought_tree = self._get_thought_tree(ctx)
         nodes_to_evaluate = [
@@ -1096,34 +1234,28 @@ class ToTBeamSearchCoordinator(BaseAgent):
             logger.info(f"[{self.name}] Evaluating node {node_id}: '{node_thought[:50]}...'")
 
             # --- Step 2a: Call Researcher ---
-            research_findings = "No research conducted." # Default value
+            research_findings = "No research conducted."
             try:
                 research_instruction = (
                     f"Gather relevant information and context for the following thought using your search tool. "
                     f"Focus on facts, potential issues, or supporting data.\nThought: {node_thought}"
                 )
-                # Store instruction in session state (researcher agent expects this)
-                # Check if researcher expects instruction via session state or direct input
-                # Assuming session state for now, based on other agents.
-                # If it takes direct input, the call would be different.
+                # Store instruction in session state for researcher agent
                 ctx.session.state["researcher_instruction"] = research_instruction
 
                 logger.info(f"[{self.name}] Calling Researcher for node {node_id}...")
                 current_research_output = ""
-                final_research_text = None # Use None to indicate no valid output yet
+                final_research_text = None
                 async for event in self._run_sub_agent_safely(self.researcher, ctx):
-                    yield event # Pass through researcher events
+                    yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
-                        # Capture the first non-empty text part found
                         if final_research_text is None:
                              final_research_text = event.content.parts[0].text
 
-                # Use captured text or a default message if nothing valid was found
                 research_findings = final_research_text if final_research_text is not None else "Researcher returned no specific findings."
                 logger.info(f"[{self.name}] Research completed for node {node_id}.")
-                # Yield an event summarizing research completion
                 yield Event(
-                    author=self.researcher.name, # Attribute research output to researcher
+                    author=self.researcher.name,
                     invocation_id=ctx.invocation_id,
                     content=types.Content(parts=[types.Part(text=f"Research findings for '{node_thought[:30]}...':\n{research_findings}")])
                 )
@@ -1155,15 +1287,13 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 ctx.session.state["analyzer_instruction"] = analyzer_instruction
                 logger.info(f"[{self.name}] Calling Analyzer for node {node_id} with research context...")
                 current_analyzer_output = ""
-                final_analyzer_text = None # Use None to indicate no valid output yet
+                final_analyzer_text = None
                 async for event in self._run_sub_agent_safely(self.analyzer, ctx):
                     yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
-                         # Capture the first non-empty text part found
                          if final_analyzer_text is None:
                               final_analyzer_text = event.content.parts[0].text
                 
-                # Use captured text or a default message if nothing valid was found
                 analyzer_output = final_analyzer_text if final_analyzer_text is not None else "[Analyzer returned empty output]"
                 analyzer_score = self._extract_score(analyzer_output)
                 logger.info(f"[{self.name}] Analyzer score for {node_id}: {analyzer_score}")
@@ -1187,15 +1317,13 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 ctx.session.state["critic_instruction"] = critic_instruction
                 logger.info(f"[{self.name}] Calling Critic for node {node_id} with research context...")
                 current_critic_output = ""
-                final_critic_text = None # Use None to indicate no valid output yet
+                final_critic_text = None
                 async for event in self._run_sub_agent_safely(self.critic, ctx):
                     yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
-                        # Capture the first non-empty text part found
                          if final_critic_text is None:
                               final_critic_text = event.content.parts[0].text
                 
-                # Use captured text or a default message if nothing valid was found
                 critic_output = final_critic_text if final_critic_text is not None else "[Critic returned empty output]"
                 critic_score = self._extract_score(critic_output)
                 logger.info(f"[{self.name}] Critic score for {node_id}: {critic_score}")
@@ -1215,7 +1343,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
             update_data = {
                 "evaluationScore": final_score,
                 "status": "evaluated",
-                "researchFindings": research_findings, # Store research findings
+                "researchFindings": research_findings,
                 "analyzerOutput": analyzer_output,
                 "criticOutput": critic_output,
             }
@@ -1228,16 +1356,31 @@ class ToTBeamSearchCoordinator(BaseAgent):
     # --- Selection Step ---
     async def _select_next_beam(self, ctx: InvocationContext) -> List[str]:
         """
-        Selects the top-k thoughts based on evaluation scores to form the new beam.
-        
-        This helper method:
-        1. Finds nodes marked as 'evaluated'
-        2. Sorts them by evaluation score (higher is better)
-        3. Selects the top-k nodes based on beam_width
-        4. Updates node statuses: selected nodes → 'active', others → 'pruned'
-        
+        Select the top-k thoughts for the next beam based on evaluation scores.
+
+        This method implements the beam search selection process:
+        1. Identify all evaluated nodes from current round
+        2. Sort nodes by evaluation score (descending)
+        3. Select top-k nodes based on beam_width
+        4. Update node statuses (active/pruned)
+
+        Selection Process:
+        - Considers only nodes marked as 'evaluated'
+        - Uses evaluation scores to rank nodes
+        - Maintains beam width constraint
+        - Updates node statuses for tracking
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
         Returns:
-            List of node IDs selected for the next beam
+            List[str]: IDs of selected nodes for next beam
+
+        State Updates:
+            - Updates node statuses in thought tree:
+              - Selected nodes -> 'active'
+              - Non-selected nodes -> 'pruned'
+            - Logs selection decisions and scores
         """
         thought_tree = self._get_thought_tree(ctx)
         
@@ -1287,15 +1430,37 @@ class ToTBeamSearchCoordinator(BaseAgent):
     # --- Synthesis Step ---
     async def _synthesize_result(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
-        Synthesizes the final result from the best path found in the thought tree.
-        
-        This helper method:
-        1. Identifies the best node based on evaluation score
-        2. Traces the path from that node back to the root
-        3. Calls the synthesizer agent to generate the final answer based on this path
-        
-        Stores the synthesizer result dictionary in
-        ctx.session.state['_synthesize_result_result']
+        Synthesize final result from the best path in the thought tree.
+
+        This method implements the final synthesis process:
+        1. Best Path Selection:
+           - Find highest scoring node in active beam
+           - Fall back to best scored node in entire tree if needed
+           - Use root as last resort if no scored nodes exist
+        2. Path Construction:
+           - Trace path from best node back to root
+           - Build comprehensive path representation
+           - Include scores and depth information
+        3. Final Synthesis:
+           - Call synthesizer agent with path context
+           - Generate coherent final answer
+           - Handle potential synthesis failures
+
+        Key Features:
+        - Robust best node selection with fallbacks
+        - Comprehensive path tracing and formatting
+        - Error handling at each synthesis step
+        - Detailed logging of synthesis process
+
+        Args:
+            ctx (InvocationContext): Current invocation context
+
+        Yields:
+            Event: Synthesis progress and result events
+
+        State Updates:
+            - '_synthesize_result_result': Final synthesis output or error
+            - Logs synthesis decisions and results
         """
         thought_tree = self._get_thought_tree(ctx)
         active_beam = self._get_active_beam(ctx)
@@ -1313,7 +1478,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
             logger.info(f"[{self.name}] Looking for best node in active beam of {len(active_beam)} nodes.")
             for node_id in active_beam:
                 node = thought_tree.get(node_id)
-                # Correct: Safely handle score comparison, ensure None doesn't cause type error
+                # Safely handle score comparison
                 node_score = node.get("evaluationScore")
                 if node and node_score is not None and node_score > highest_score:
                     highest_score = node_score
@@ -1323,7 +1488,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
         if not best_node_id:
             logger.info(f"[{self.name}] No suitable node in active beam, checking all nodes.")
             for node_id, node in thought_tree.items():
-                # Correct: Safely handle score comparison, ensure None doesn't cause type error
+                # Safely handle score comparison
                 node_score = node.get("evaluationScore")
                 if node.get("status") in ["evaluated", "active", "pruned"] and node_score is not None and node_score > highest_score:
                     highest_score = node_score
@@ -1353,7 +1518,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 )
                 path_to_root.append(node_info)
                 
-                # Track maximum depth for logging
+                # Track maximum depth
                 max_depth_found = max(max_depth_found, node.get('depth', 0))
                 
                 # Move to parent
@@ -1368,7 +1533,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
         
         logger.info(f"[{self.name}] Found path of length {len(path_to_root)}, max depth {max_depth_found}")
 
-        # Get the original problem
+        # Get the original problem for context
         initial_problem = self._get_state_value(ctx, "initial_problem", "Unknown initial problem")
         
         # --- Step 3: Call Synthesizer ---
@@ -1388,13 +1553,11 @@ class ToTBeamSearchCoordinator(BaseAgent):
             # Correct: Use async for to iterate over agent events
             synthesizer_output = ""
             async for event in self._run_sub_agent_safely(self.synthesizer, ctx):
-                # Pass through the events from the synthesizer
                 yield event
-                # Extract output from the final event if possible
                 if event.content and event.content.parts:
-                    synthesizer_output = event.content.parts[0].text # Accumulate or take last? Assume last.
+                    synthesizer_output = event.content.parts[0].text
 
-            # Create a result structure similar to what was expected before
+            # Store result
             synthesizer_result = {"output": synthesizer_output}
             logger.info(f"[{self.name}] Synthesizer completed successfully.")
             self._set_state_value(ctx, '_synthesize_result_result', synthesizer_result)
@@ -1425,19 +1588,18 @@ validator_tool = FunctionTool(validate_thought_node_data)
 root_agent = ToTBeamSearchCoordinator(
     name="ToT_Coordinator",
     planner=planner_agent,
-    researcher=researcher_agent, # Pass researcher agent instance
+    researcher=researcher_agent,
     analyzer=analyzer_agent,
     critic=critic_agent,
     synthesizer=synthesizer_agent,
     validator=validator_tool,
     beam_width=int(os.environ.get("BEAM_WIDTH", 3)),
     max_depth=int(os.environ.get("MAX_DEPTH", 5)),
-    model=coordinator_config, # Use the specific Coordinator config
+    model=coordinator_config,
 )
 
-# Log the agent creation
+# Log the final agent configuration
 logger.info(f"ToT Beam Search Coordinator initialized with beam width={root_agent.beam_width}, depth={root_agent.max_depth}")
 
-# Note: To use this agent, you would need to create a Runner instance
-# and call run() or run_async() with session, user content, etc.
-# See the example setup in the documentation.
+# Entry point for running the agent would typically be here,
+# creating a Runner instance and calling run() or run_async().
