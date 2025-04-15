@@ -473,9 +473,9 @@ class ToTBeamSearchCoordinator(BaseAgent):
     synthesizer: LlmAgent
     validator: FunctionTool
 
-    beam_width: int = Field(default=3, description="Number of top nodes (k) to keep in the beam.")
-    max_depth: int = Field(default=5, description="Maximum depth of the tree to explore.")
-    model: LlmAgent | LiteLlm | str 
+    # beam_width: int = Field(default=3, description="Number of top nodes (k) to keep in the beam.") # REMOVED
+    # max_depth: int = Field(default=5, description="Maximum depth of the tree to explore.") # REMOVED
+    model: LlmAgent | LiteLlm | str
 
     # --- Rate Limiting Configuration ---
     use_free_tier_rate_limiting: bool = Field(default=False, description="Enable rate limiting for Google AI Studio free tier.")
@@ -495,8 +495,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
         critic: LlmAgent,
         synthesizer: LlmAgent,
         validator: FunctionTool,
-        beam_width: int = 3,
-        max_depth: int = 5,
+        # beam_width: int = 3, # REMOVED
+        # max_depth: int = 5, # REMOVED
         model: LlmAgent | LiteLlm | str = None,
     ):
         """
@@ -513,8 +513,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
             critic (LlmAgent): Agent for identifying flaws and suggesting improvements
             synthesizer (LlmAgent): Agent for combining information and generating final results
             validator (FunctionTool): Tool for validating thought node data structure
-            beam_width (int, optional): Number of top nodes to maintain in beam. Defaults to 3
-            max_depth (int, optional): Maximum depth to explore in thought tree. Defaults to 5
+            # beam_width (int, optional): Number of top nodes to maintain in beam. Defaults to 3 # REMOVED
+            # max_depth (int, optional): Maximum depth to explore in thought tree. Defaults to 5 # REMOVED
             model (Union[LlmAgent, LiteLlm, str], optional): Model for coordinator's own processing. Defaults to None
 
         Configuration:
@@ -546,7 +546,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
         # Pass the values read from environment or defaults to super init
         super().__init__(
             name=name,
-            description=f"Tree of Thoughts Beam Search (width={beam_width}, depth={max_depth})",
+            # description=f"Tree of Thoughts Beam Search (width={beam_width}, depth={max_depth})", # UPDATED
+            description=f"Tree of Thoughts Coordinator with LLM-driven exploration",
             model=model,
             planner=planner,
             researcher=researcher, # Pass researcher to super
@@ -554,8 +555,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
             critic=critic,
             synthesizer=synthesizer,
             validator=validator,
-            beam_width=beam_width,
-            max_depth=max_depth,
+            # beam_width=beam_width, # REMOVED
+            # max_depth=max_depth, # REMOVED
             use_free_tier_rate_limiting=use_free_tier_rate_limiting_env,
             free_tier_sleep_seconds=free_tier_sleep_seconds_env,
             use_vertex_ai=use_vertex_ai_env, # Pass Vertex status too
@@ -563,7 +564,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
         )
         
         # Log initialization
-        logger.info(f"[{self.name}] ToT Coordinator initialized with beam width {beam_width} and max depth {max_depth}")
+        # logger.info(f"[{self.name}] ToT Coordinator initialized with beam width {beam_width} and max depth {max_depth}") # UPDATED
+        logger.info(f"[{self.name}] ToT Coordinator initialized for LLM-driven exploration.")
 
     # --- Helper methods for state management ---
     def _get_state_value(self, ctx: InvocationContext, key: str, default: Any = None) -> Any:
@@ -815,35 +817,39 @@ class ToTBeamSearchCoordinator(BaseAgent):
             else:
                  logger.warning(f"[{self.name}] Node {node_id} from initialization result not found in tree.")
 
-        # Set beam to initial nodes for first iteration
+        # Initial beam starts with all generated initial strategies
         self._set_active_beam(ctx, newly_added_ids)
-        logger.info(f"[{self.name}] Initial beam set with {len(newly_added_ids)} active nodes.")
-        
-        # --- Phase 2: Main Beam Search Loop ---
-        max_iterations = self.max_depth
-        current_depth = 1  # Root is at depth 0, initial nodes at depth 1
-        
-        for iteration in range(max_iterations):
+        logger.info(f"[{self.name}] Initial active paths set with {len(newly_added_ids)} nodes.")
+
+        # --- Phase 2: Main Beam Search Loop --- # Renamed to Exploration Loop
+        # max_iterations = self.max_depth # REMOVED
+        current_depth = 1 # Root is at depth 0, initial nodes at depth 1
+        iteration_count = 0
+
+        # Loop indefinitely until the active_beam is empty
+        while True: # Loop now relies on beam emptying
+            iteration_count += 1
             thought_tree = self._get_thought_tree(ctx)
             active_beam = self._get_active_beam(ctx)
-            
+
             # Check termination condition
             if not active_beam:
-                logger.info(f"[{self.name}] Beam is empty, terminating search.")
+                logger.info(f"[{self.name}] All paths terminated or pruned. Stopping exploration loop.")
                 break
-                
-            if current_depth >= self.max_depth:
-                logger.info(f"[{self.name}] Reached maximum depth {self.max_depth}, terminating search.")
-                break
-                
-            logger.info(f"[{self.name}] Iteration {iteration+1}/{max_iterations}, depth {current_depth}, beam size {len(active_beam)}")
-            
+
+            # Removed max_depth check
+            # if current_depth >= self.max_depth:
+            #    logger.info(f"[{self.name}] Reached maximum depth {self.max_depth}, terminating search.")
+            #    break
+
+            logger.info(f"[{self.name}] Exploration Iteration {iteration_count}, Current Depth {current_depth}, Active Paths {len(active_beam)}")
+
             # Step 2a: Generate next thoughts from active beam
             logger.info(f"[{self.name}] Step 2a: Generating next thoughts...")
             yield Event(
                 author=self.name,
                 invocation_id=ctx.invocation_id,
-                content=types.Content(parts=[types.Part(text=f"Generating thoughts (iteration {iteration+1})...")])
+                content=types.Content(parts=[types.Part(text=f"Generating thoughts (iteration {iteration_count})...")])
             )
             
             async for event in self._generate_next_thoughts(ctx):
@@ -865,25 +871,26 @@ class ToTBeamSearchCoordinator(BaseAgent):
             async for event in self._evaluate_thoughts(ctx):
                 yield event
                 
-            # Step 2c: Select next beam (best nodes)
-            logger.info(f"[{self.name}] Step 2c: Selecting best nodes for next beam...")
+            # Step 2c: Select next beam (best nodes) -> Renamed to Select Active Paths
+            logger.info(f"[{self.name}] Step 2c: Selecting active paths for next iteration...")
             yield Event(
                 author=self.name,
                 invocation_id=ctx.invocation_id,
-                content=types.Content(parts=[types.Part(text="Selecting best thoughts for next iteration...")])
+                content=types.Content(parts=[types.Part(text="Selecting viable paths for next iteration...")])
             )
             
-            new_beam = await self._select_next_beam(ctx)
+            new_beam = await self._select_next_beam(ctx) # Function now selects based on termination flag
+            self._set_active_beam(ctx, new_beam)
             if new_beam:
-                self._set_active_beam(ctx, new_beam)
-                logger.info(f"[{self.name}] New beam selected with {len(new_beam)} nodes.")
+                logger.info(f"[{self.name}] New active paths selected: {len(new_beam)} nodes.")
             else:
-                logger.info(f"[{self.name}] Selection resulted in empty beam, terminating search.")
-                break
-                
+                logger.info(f"[{self.name}] Selection resulted in no active paths left.")
+                # The loop will terminate in the next iteration check
+
             # Increment depth for next iteration
+            # Note: Depth tracking might be less critical now but kept for logging/potential future use
             current_depth += 1
-            
+
         # --- Phase 3: Synthesis ---
         logger.info(f"[{self.name}] Phase 3: Synthesizing final result...")
         yield Event(
@@ -983,8 +990,10 @@ class ToTBeamSearchCoordinator(BaseAgent):
         logger.info(f"[{self.name}] Calling Planner to generate initial *strategies*.")
         try:
             # --- STRONGLY REVISED PLANNER INSTRUCTION for Initialization ---
+            # Ask for a reasonable fixed number of initial strategies, e.g., 3
+            num_initial_strategies = 3 # Define a fixed number
             planner_instruction = (
-                f"Your **sole task** right now is to generate exactly **{self.beam_width} distinct high-level strategies** "
+                f"Your **sole task** right now is to generate exactly **{num_initial_strategies} distinct high-level strategies** "
                 f"to approach the problem: '{initial_problem}'.\n"
                 f"**CRITICAL FORMATTING REQUIREMENT:**\n"
                 f"1. Each strategy MUST be a concise phrase or sentence describing an approach.\n"
@@ -1029,6 +1038,10 @@ class ToTBeamSearchCoordinator(BaseAgent):
             if not initial_strategies:
                 logger.error(f"[{self.name}] Planner failed to generate initial strategies in any recognizable format. Using generic fallback.")
                 initial_strategies = [f"Develop a comprehensive answer for: {initial_problem}"]
+            elif len(initial_strategies) > num_initial_strategies:
+                 logger.warning(f"[{self.name}] Planner generated {len(initial_strategies)} strategies, more than the requested {num_initial_strategies}. Using all generated.")
+            elif len(initial_strategies) < num_initial_strategies:
+                 logger.warning(f"[{self.name}] Planner generated {len(initial_strategies)} strategies, fewer than the requested {num_initial_strategies}.")
 
             # Proceed with all strategies identified by the planner
             logger.info(f"[{self.name}] Proceeding with {len(initial_strategies)} initial strategies identified by the planner.")
@@ -1089,7 +1102,6 @@ class ToTBeamSearchCoordinator(BaseAgent):
           - Parent node's evaluation score
           - Current depth in tree
           - Base beam width parameter
-        - Implements depth checking to respect max_depth
         - Maintains node relationships in tree structure
         - Handles validation and error cases for each generated thought
 
@@ -1118,25 +1130,23 @@ class ToTBeamSearchCoordinator(BaseAgent):
             parent_thought = parent_node.get("thoughtContent", "")
             parent_depth = parent_node.get("depth", 0)
 
-            if parent_depth >= self.max_depth:
-                 logger.info(f"[{self.name}] Node {parent_id} is at max depth {self.max_depth}. Skipping generation.")
-                 continue
-
             logger.info(f"[{self.name}] Calling Planner to expand node: {parent_id} ('{parent_thought[:50]}...')")
             try:
-                # --- Dynamic Generation Count Logic ---
-                base_num_to_generate = self.beam_width
+                # --- Dynamic Generation Count Logic (Removed dependency on beam_width) ---
+                base_num_to_generate = 2 # Use a fixed small base, e.g., 2
                 parent_score = parent_node.get("evaluationScore")
                 score_adjustment = 0
                 if parent_score is not None:
                     if parent_score >= 8.0:
-                        score_adjustment = 1
-                    elif parent_score < 5.0:
-                        score_adjustment = -1
-                
+                        score_adjustment = 1 # Generate more if promising
+                    elif parent_score < 4.0: # More aggressive pruning if score is low
+                        score_adjustment = -1 # Generate fewer if not promising
+
+                # Depth adjustment logic - NO self.max_depth here
                 depth_adjustment = 0
-                if parent_depth >= self.max_depth - 2:
-                     depth_adjustment = -1
+                # You could optionally add depth logic based on absolute depth, e.g.:
+                # if parent_depth >= 5: # Check against a fixed number, not self.max_depth
+                #    depth_adjustment = -1
 
                 num_to_generate = max(1, base_num_to_generate + score_adjustment + depth_adjustment)
                 logger.info(f"[{self.name}] Dynamically determined to generate {num_to_generate} thoughts for node {parent_id} (base={base_num_to_generate}, score_adj={score_adjustment}, depth_adj={depth_adjustment})")
@@ -1447,8 +1457,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
         State Updates:
             - Updates node statuses in thought tree:
-              - Selected nodes -> 'active'
-              - Non-selected nodes -> 'pruned'
+              - Selected nodes -> 'active' # Nodes not recommended for termination
+              - Non-selected nodes -> 'pruned' # Nodes not selected (implicitly includes low-score ones)
               - Nodes recommended for termination -> 'terminated_early'
             - Logs selection decisions and scores
         """
@@ -1466,47 +1476,48 @@ class ToTBeamSearchCoordinator(BaseAgent):
             logger.warning(f"[{self.name}] No evaluated nodes found for selection.")
             return []
 
-        # Sort nodes by score (descending order - higher is better)
+        # Sort nodes by score (descending) - still useful for logging/understanding
         nodes_to_consider.sort(key=lambda x: x.get("evaluationScore", 0.0), reverse=True)
-        
+
         # Log scores to help understand selection
-        logger.info(f"[{self.name}] Node scores: " + 
-                   ", ".join([f"{node.get('validatedThoughtId', 'unknown')}:{node.get('evaluationScore', 0.0):.2f}" 
-                             for node in nodes_to_consider[:5]]) +
-                   (f" ... and {len(nodes_to_consider)-5} more" if len(nodes_to_consider) > 5 else ""))
-
-        # Select top k nodes for the beam
-        top_k_nodes = nodes_to_consider[:self.beam_width]
-        top_k_ids = [node["validatedThoughtId"] for node in top_k_nodes]
-
-        logger.info(f"[{self.name}] Selected top {len(top_k_ids)} potential nodes based on score: {top_k_ids}")
+        # Show more scores now that beam width isn't fixed
+        log_limit = 10
+        logger.info(f"[{self.name}] Node scores (Top {log_limit}): " +
+                   ", ".join([f"{node.get('validatedThoughtId', 'unknown')}:{node.get('evaluationScore', 0.0):.2f} (Term:{node.get('terminationRecommended', 'F')})" 
+                             for node in nodes_to_consider[:log_limit]]) +
+                   (f" ... and {len(nodes_to_consider)-log_limit} more" if len(nodes_to_consider) > log_limit else ""))
 
         # Update node statuses - selected nodes are 'active', others are 'pruned' or 'terminated_early'
         selected_count = 0
         pruned_count = 0
         terminated_count = 0
-        final_beam = [] # The actual beam after filtering terminated nodes
+        final_beam = [] # The actual beam: nodes to activate for the next iteration
 
         for node_data in nodes_to_consider:
             node_id = node_data["validatedThoughtId"]
             termination_recommended = node_data.get("terminationRecommended", False)
 
-            if node_id in top_k_ids:
-                if termination_recommended:
-                    self._update_node(ctx, node_id, {"status": "terminated_early"})
-                    terminated_count += 1
-                    logger.info(f"[{self.name}] Node {node_id} was in top-k but recommended for termination. Status: terminated_early.")
-                else:
-                    self._update_node(ctx, node_id, {"status": "active"})
-                    final_beam.append(node_id) # Add to the actual next beam
-                    selected_count += 1
+            # Decide based on termination recommendation
+            if termination_recommended:
+                self._update_node(ctx, node_id, {"status": "terminated_early"})
+                terminated_count += 1
+                # logger.info(f"[{self.name}] Node {node_id} was recommended for termination. Status: terminated_early.") # Reduced verbosity
             else:
-                # Nodes not in top-k are pruned, regardless of termination recommendation
-                self._update_node(ctx, node_id, {"status": "pruned"})
-                pruned_count += 1
+                # If not terminated, it becomes active for the next round
+                self._update_node(ctx, node_id, {"status": "active"})
+                final_beam.append(node_id) # Add to the actual next beam
+                selected_count += 1
 
-        logger.info(f"[{self.name}] Selection complete - {selected_count} nodes marked active for next beam, {pruned_count} nodes pruned, {terminated_count} nodes terminated early.")
-        logger.info(f"[{self.name}] Final beam for next iteration: {final_beam}")
+            # Note: We no longer explicitly prune nodes *not* in a top-k list.
+            # Nodes that are evaluated but not recommended for termination become active.
+            # Nodes evaluated and recommended for termination become terminated_early.
+            # There isn't a separate 'pruned' status assigned here unless we add logic
+            # e.g., prune nodes below a certain absolute score threshold?
+            # For now, keeping it simple: evaluated nodes are either terminated or active.
+
+        # Adjust log message - pruned_count will be 0 with current logic
+        logger.info(f"[{self.name}] Selection complete - {selected_count} nodes marked active for next iteration, {terminated_count} nodes terminated early.")
+        logger.info(f"[{self.name}] Final active paths for next iteration: {final_beam}")
         return final_beam
 
     # --- Synthesis Step ---
@@ -1675,13 +1686,11 @@ root_agent = ToTBeamSearchCoordinator(
     critic=critic_agent,
     synthesizer=synthesizer_agent,
     validator=validator_tool,
-    beam_width=int(os.environ.get("BEAM_WIDTH", 3)),
-    max_depth=int(os.environ.get("MAX_DEPTH", 5)),
     model=coordinator_config,
 )
 
 # Log the final agent configuration
-logger.info(f"ToT Beam Search Coordinator initialized with beam width={root_agent.beam_width}, depth={root_agent.max_depth}")
+logger.info(f"ToT Coordinator initialized for LLM-driven exploration.")
 
 # Entry point for running the agent would typically be here,
 # creating a Runner instance and calling run() or run_async().
