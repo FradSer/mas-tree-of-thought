@@ -160,7 +160,7 @@ def validate_thought_node_data(
             "thoughtContent": current_thought_data.thought,
             "evaluationScore": current_thought_data.evaluationScore,
             "validation_status": "success",
-            "message": f"Thought node '{current_thought_data.thoughtId}' data is valid."
+            "message": f"Thought node '{current_thought_data.thoughtId}' data is valid. Thought content: '{current_thought_data.thought[:100]}'"
         }
         return result_data
 
@@ -683,6 +683,30 @@ class ToTBeamSearchCoordinator(BaseAgent):
         logger.debug(f"Could not find score pattern in text: '{text[:100]}...'")
         return None
 
+    # --- Helper method for termination recommendation extraction ---
+    def _extract_termination_recommendation(self, text: str) -> bool:
+        """
+        Extract termination recommendation from agent output text.
+
+        Looks for patterns like 'Termination Recommendation: True' or 'Termination Recommendation: False'.
+        Defaults to False if pattern not found or invalid.
+
+        Args:
+            text (str): Text to extract recommendation from
+
+        Returns:
+            bool: True if termination is recommended, False otherwise.
+        """
+        if not isinstance(text, str):
+            return False
+        # Match "Termination Recommendation:" followed by True or False (case-insensitive)
+        match = re.search(r"Termination Recommendation:\s*(True|False)", text, re.IGNORECASE)
+        if match:
+            recommendation = match.group(1).lower()
+            return recommendation == 'true'
+        logger.debug(f"Could not find termination recommendation pattern in text: '{text[:100]}...'")
+        return False # Default to False if not explicitly found
+
     # --- Helper method to safely run Sub Agents and filter empty model events ---
     async def _run_sub_agent_safely(self, agent: LlmAgent, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
@@ -937,15 +961,23 @@ class ToTBeamSearchCoordinator(BaseAgent):
             "depth": 0, "status": "active",
         }
         validation_result = await self.validator.run_async(tool_context=ctx, args=validation_args)
-        yield Event( # Yield validation event
-            author=self.validator.name, invocation_id=ctx.invocation_id,
-            content=types.Content(parts=[types.Part(text=f"Validated thought: {validation_result.get('message', 'No message')}")])
-        )
-        if validation_result.get("validation_status") != "success":
-            logger.error(f"[{self.name}] Root node validation failed: {validation_result.get('error')}.")
-            return
-        self._update_node(ctx, root_id, validation_result)
-        logger.info(f"[{self.name}] Root node added to tree.")
+        # Yield event *after* checking success/failure
+        if validation_result.get("validation_status") == "success":
+            self._update_node(ctx, root_id, validation_result) # Update tree first
+            logger.info(f"[{self.name}] Root node added to tree.")
+            # Yield improved validation event with thought content
+            yield Event(
+                author=self.validator.name, invocation_id=ctx.invocation_id,
+                content=types.Content(parts=[types.Part(text=f"Validated Root Node ({root_id}): '{validation_result.get('thoughtContent', 'N/A')[:100]}...'")])
+            )
+        else:
+            logger.error(f"[{self.name}] Root node validation failed: {validation_result.get('error')}. ")
+            # Yield clearer failure event
+            yield Event(
+                author=self.validator.name, invocation_id=ctx.invocation_id,
+                content=types.Content(parts=[types.Part(text=f"Validation Failed for Root Node ({root_id}): {validation_result.get('error', 'Unknown error')}")])
+            )
+            return # Stop initialization if root fails validation
 
         # 4. Call Planner to generate distinct initial STRATEGIES, not just a definition
         logger.info(f"[{self.name}] Calling Planner to generate initial *strategies*.")
@@ -998,9 +1030,8 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 logger.error(f"[{self.name}] Planner failed to generate initial strategies in any recognizable format. Using generic fallback.")
                 initial_strategies = [f"Develop a comprehensive answer for: {initial_problem}"]
 
-            # Ensure we don't exceed beam width
-            initial_strategies = initial_strategies[:self.beam_width]
-            logger.info(f"[{self.name}] Finalizing with {len(initial_strategies)} initial strategies for the beam.")
+            # Proceed with all strategies identified by the planner
+            logger.info(f"[{self.name}] Proceeding with {len(initial_strategies)} initial strategies identified by the planner.")
             # --- End of Parsing Logic ---
 
             # 5. Process each strategy into a child node
@@ -1013,17 +1044,23 @@ class ToTBeamSearchCoordinator(BaseAgent):
                     "depth": 1, "status": "generated", # Ready for generation/evaluation
                 }
                 child_validation_result = await self.validator.run_async(tool_context=ctx, args=child_validation_args)
-                yield Event( # Yield validation event for strategy node
-                    author=self.validator.name, invocation_id=ctx.invocation_id,
-                    content=types.Content(parts=[types.Part(text=f"Validated thought: {child_validation_result.get('message', 'No message')}")])
-                )
-
+                # Yield event *after* checking success/failure
                 if child_validation_result.get("validation_status") == "success":
-                    self._update_node(ctx, child_id, child_validation_result)
+                    self._update_node(ctx, child_id, child_validation_result) # Update tree first
                     newly_added_ids.append(child_id)
                     logger.info(f"[{self.name}] Added initial strategy node: '{strategy_thought[:50]}...' ({child_id})")
+                    # Yield improved validation event with thought content
+                    yield Event(
+                        author=self.validator.name, invocation_id=ctx.invocation_id,
+                        content=types.Content(parts=[types.Part(text=f"Validated Initial Strategy ({child_id}): '{child_validation_result.get('thoughtContent', 'N/A')[:100]}...'")])
+                    )
                 else:
-                    logger.warning(f"[{self.name}] Validation failed for strategy path {i}.")
+                    logger.warning(f"[{self.name}] Validation failed for strategy path {i}: {child_validation_result.get('error')}")
+                    # Yield clearer failure event
+                    yield Event(
+                        author=self.validator.name, invocation_id=ctx.invocation_id,
+                        content=types.Content(parts=[types.Part(text=f"Validation Failed for Initial Strategy ({child_id}): {child_validation_result.get('error', 'Unknown error')}")])
+                    )
 
             # 6. Store results
             self._set_state_value(ctx, '_initialize_workflow_result', newly_added_ids)
@@ -1109,8 +1146,11 @@ class ToTBeamSearchCoordinator(BaseAgent):
                     f"The current thought/strategy is: '{parent_thought}'. "
                     f"It is at depth {parent_depth} and received a score of {parent_score if parent_score is not None else 'N/A'}. "
                     f"Based on this, generate exactly **{num_to_generate}** distinct and concrete **next steps, sub-topics, or specific questions** "
-                    f"to explore *within* this thought. Focus on quality and relevance. "
-                    f"List each clearly on a new line."
+                    f"to explore *within* this thought. Focus on quality and relevance.\n"
+                    f"**CRITICAL FORMATTING REQUIREMENTS:**\n"
+                    f"1. List each clearly on a new line.\n"
+                    f"2. Output *only* the {num_to_generate} items, one per line.\n"
+                    f"3. **DO NOT** include any introductory text, explanations, numbering, or any other text before, between, or after the list. Your entire output must be only the {num_to_generate} lines of next steps/sub-topics/questions."
                 )
                 ctx.session.state["planner_instruction"] = planner_instruction
                 
@@ -1150,20 +1190,29 @@ class ToTBeamSearchCoordinator(BaseAgent):
                         "status": "generated",
                     }
                     child_validation_result = await self.validator.run_async(tool_context=ctx, args=child_validation_args)
-                    yield Event(
-                        author=self.validator.name,
-                        invocation_id=ctx.invocation_id,
-                        content=types.Content(
-                            parts=[types.Part(text=f"Validated thought: {child_validation_result.get('message', 'No message')}")]
-                        )
-                    )
-
+                    # Yield event *after* checking success/failure
                     if child_validation_result.get("validation_status") == "success":
-                        self._update_node(ctx, child_id, child_validation_result)
+                        self._update_node(ctx, child_id, child_validation_result) # Update tree first
                         newly_generated_ids_this_round.append(child_id)
                         logger.info(f"[{self.name}] Generated child node: {child_id}")
+                        # Yield improved validation event with thought content
+                        yield Event(
+                            author=self.validator.name,
+                            invocation_id=ctx.invocation_id,
+                            content=types.Content(
+                                parts=[types.Part(text=f"Validated Thought ({child_id}): '{child_validation_result.get('thoughtContent', 'N/A')[:100]}...'")]
+                            )
+                        )
                     else:
                         logger.warning(f"[{self.name}] Validation failed for generated child of {parent_id}: {child_validation_result.get('error')}")
+                        # Yield clearer failure event
+                        yield Event(
+                            author=self.validator.name,
+                            invocation_id=ctx.invocation_id,
+                            content=types.Content(
+                                parts=[types.Part(text=f"Validation Failed for Generated Thought ({child_id}): {child_validation_result.get('error', 'Unknown error')}")]
+                            )
+                        )
 
             except Exception as e:
                 logger.error(f"[{self.name}] Planner failed for node {parent_id}: {e}")
@@ -1277,12 +1326,17 @@ class ToTBeamSearchCoordinator(BaseAgent):
             critic_output = ""
 
             try:
-                # Analyzer instruction includes research findings
+                # Analyzer instruction includes research findings and termination check
                 analyzer_instruction = (
                     f"Analyze the soundness, feasibility, and logical consistency of the following thought, "
-                    f"considering the research findings below. Provide an 'Evaluation Score: [0-10]/10' at the end.\n\n"
+                    f"considering the research findings below. Focus on its potential to lead towards a final solution.\n\n"
                     f"Thought: {node_thought}\n\n"
-                    f"Research Findings:\n{research_findings}"
+                    f"Research Findings:\n{research_findings}\n\n"
+                    f"**Evaluation Tasks:**\n"
+                    f"1. Provide your analysis focusing on the thought's promise and viability for continued exploration.\n"
+                    f"2. Assess if this path seems highly promising, has hit a dead end, or might be close to a solution. Based on this, recommend whether to continue exploring this path.\n"
+                    f"3. Output a structured score: `Evaluation Score: [0-10]/10` (0=dead end, 10=highly promising path).\n"
+                    f"4. Output a termination recommendation: `Termination Recommendation: [True/False]` (True if path should stop, False if it should continue)."
                 )
                 ctx.session.state["analyzer_instruction"] = analyzer_instruction
                 logger.info(f"[{self.name}] Calling Analyzer for node {node_id} with research context...")
@@ -1306,13 +1360,19 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 )
 
             try:
-                # Critic instruction includes research findings
+                # Critic instruction includes research findings, alternatives, and termination check
                 critic_instruction = (
-                    f"Critically evaluate the following thought for flaws, biases, or weaknesses, suggesting improvements "
-                    f"or alternatives, considering the research findings below. Provide an 'Evaluation Score: [0-10]/10' "
-                    f"based on its promise and completeness at the end.\n\n"
+                    f"Critically evaluate the following thought for flaws, biases, or weaknesses, considering the research findings below. "
+                    f"Focus on whether this path is worth pursuing further.\n\n"
                     f"Thought: {node_thought}\n\n"
-                    f"Research Findings:\n{research_findings}"
+                    f"Research Findings:\n{research_findings}\n\n"
+                    f"**Evaluation Tasks:**\n"
+                    f"1. Provide your critique, identifying weaknesses that might hinder progress down this path.\n"
+                    f"2. Suggest specific improvements OR concrete alternative *directions* if this path seems flawed.\n"
+                    f"3. Assess the overall promise and viability of *continuing* down this path. Recommend whether to stop or proceed.\n"
+                    f"4. Output a structured score: `Evaluation Score: [0-10]/10` (0=stop, 10=very promising to continue).\n"
+                    f"5. Output a termination recommendation: `Termination Recommendation: [True/False]` (True if path should stop, False if it should continue)."
+
                 )
                 ctx.session.state["critic_instruction"] = critic_instruction
                 logger.info(f"[{self.name}] Calling Critic for node {node_id} with research context...")
@@ -1340,15 +1400,24 @@ class ToTBeamSearchCoordinator(BaseAgent):
             final_score = sum(scores) / len(scores) if scores else 1.0
             logger.info(f"[{self.name}] Node {node_id} final score: {final_score:.2f}")
 
+            # --- Extract Termination Recommendation ---
+            # Check both outputs, favor 'True' if either recommends termination
+            analyzer_term_rec = self._extract_termination_recommendation(analyzer_output)
+            critic_term_rec = self._extract_termination_recommendation(critic_output)
+            final_termination_rec = analyzer_term_rec or critic_term_rec # Default to False if neither found
+            logger.info(f"[{self.name}] Node {node_id} Termination Recommendation: {final_termination_rec} (Analyzer: {analyzer_term_rec}, Critic: {critic_term_rec})")
+            # --- End Termination Extraction ---
+
             update_data = {
                 "evaluationScore": final_score,
-                "status": "evaluated",
+                "status": "evaluated", # Status before selection decides active/pruned/terminated
                 "researchFindings": research_findings,
                 "analyzerOutput": analyzer_output,
                 "criticOutput": critic_output,
+                "terminationRecommended": final_termination_rec, # Store the recommendation
             }
             self._update_node(ctx, node_id, update_data)
-            evaluated_nodes_data.append({**node_data, **update_data})
+            evaluated_nodes_data.append({**node_data, **update_data}) # Add combined data
 
         logger.info(f"[{self.name}] Evaluation completed for {len(evaluated_nodes_data)} nodes.")
         self._set_state_value(ctx, '_evaluate_thoughts_result', evaluated_nodes_data)
@@ -1380,6 +1449,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
             - Updates node statuses in thought tree:
               - Selected nodes -> 'active'
               - Non-selected nodes -> 'pruned'
+              - Nodes recommended for termination -> 'terminated_early'
             - Logs selection decisions and scores
         """
         thought_tree = self._get_thought_tree(ctx)
@@ -1409,23 +1479,35 @@ class ToTBeamSearchCoordinator(BaseAgent):
         top_k_nodes = nodes_to_consider[:self.beam_width]
         top_k_ids = [node["validatedThoughtId"] for node in top_k_nodes]
 
-        logger.info(f"[{self.name}] Selected top {len(top_k_ids)} nodes for new beam: {top_k_ids}")
+        logger.info(f"[{self.name}] Selected top {len(top_k_ids)} potential nodes based on score: {top_k_ids}")
 
-        # Update node statuses - selected nodes are 'active', others are 'pruned'
+        # Update node statuses - selected nodes are 'active', others are 'pruned' or 'terminated_early'
         selected_count = 0
         pruned_count = 0
-        
+        terminated_count = 0
+        final_beam = [] # The actual beam after filtering terminated nodes
+
         for node_data in nodes_to_consider:
             node_id = node_data["validatedThoughtId"]
+            termination_recommended = node_data.get("terminationRecommended", False)
+
             if node_id in top_k_ids:
-                self._update_node(ctx, node_id, {"status": "active"})
-                selected_count += 1
+                if termination_recommended:
+                    self._update_node(ctx, node_id, {"status": "terminated_early"})
+                    terminated_count += 1
+                    logger.info(f"[{self.name}] Node {node_id} was in top-k but recommended for termination. Status: terminated_early.")
+                else:
+                    self._update_node(ctx, node_id, {"status": "active"})
+                    final_beam.append(node_id) # Add to the actual next beam
+                    selected_count += 1
             else:
+                # Nodes not in top-k are pruned, regardless of termination recommendation
                 self._update_node(ctx, node_id, {"status": "pruned"})
                 pruned_count += 1
 
-        logger.info(f"[{self.name}] Selection complete - {selected_count} nodes marked active, {pruned_count} nodes pruned.")
-        return top_k_ids
+        logger.info(f"[{self.name}] Selection complete - {selected_count} nodes marked active for next beam, {pruned_count} nodes pruned, {terminated_count} nodes terminated early.")
+        logger.info(f"[{self.name}] Final beam for next iteration: {final_beam}")
+        return final_beam
 
     # --- Synthesis Step ---
     async def _synthesize_result(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
