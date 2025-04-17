@@ -1,13 +1,18 @@
-# mas-tree-of-thought
+# mas-tree-of-thought ![](https://img.shields.io/badge/A%20FRAD%20PRODUCT-WIP-yellow)
+
+[![Twitter Follow](https://img.shields.io/twitter/follow/FradSer?style=social)](https://twitter.com/FradSer) [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/) [![Framework](https://img.shields.io/badge/Framework-adk-orange.svg)](https://google.github.io/adk-docs/) 
+
+English | [简体中文](README.zh-CN.md)
 
 This project implements a multi-agent system coordinated by a root agent (`ToT_Coordinator`). The coordinator manages a Tree of Thoughts (ToT) using an LLM-driven evaluation process to explore potential solutions for complex problems.
 
 ## Core Concepts
 
 *   **Tree of Thoughts (ToT) with LLM-Driven Exploration:** Problems are explored by building a tree where each node represents a thought or intermediate step. The exploration is guided dynamically by evaluating the promise of each thought using specialist LLM agents, rather than a fixed beam width or depth.
-*   **Coordinator Agent (`ToT_Coordinator`):** Orchestrates the ToT workflow. It initializes the tree, manages the set of active thoughts, delegates generation and evaluation tasks to specialist agents, determines which paths to continue exploring based on evaluation (including termination recommendations), and synthesizes the final result from the most promising thoughts discovered.
+*   **Coordinator Agent (`ToT_Coordinator`):** Orchestrates the ToT workflow. It initializes the tree, manages the set of active thoughts, delegates generation and evaluation tasks to specialist agents, determines which paths to continue exploring based on evaluation (including termination recommendations), and synthesizes the final result from the most promising thoughts discovered. It is implemented as an ADK [Custom Agent](https://google.github.io/adk-docs/agents/custom-agents/) to manage the complex conditional logic of the ToT process.
 *   **Specialist Agents:** A team of agents (Planner, Researcher, Analyzer, Critic, Synthesizer) each handle specific types of sub-tasks delegated by the coordinator (e.g., generating next steps, evaluating thoughts, gathering information, synthesizing results).
-*   **Thought Validator Tool (`validate_thought_node_data`):** A function tool used by the Coordinator to ensure the structural integrity and required metadata of each thought node before adding it to the tree.
+    *   The `Researcher` agent specifically utilizes the ADK built-in `google_search` tool.
+*   **Thought Validator Tool (`validator_tool`):** A `FunctionTool` wrapping the `validate_thought_node_data` function. Used by the Coordinator to ensure the structural integrity and required metadata of each thought node before adding it to the tree.
 *   **Dynamic Generation & Evaluation:** The number of thoughts generated can be dynamic. The evaluation process incorporates factors like research findings, analysis, critique, and crucially, a recommendation on whether to continue exploring a path.
 *   **Multi-Node Synthesis:** The final result is synthesized not just from a single best path, but by considering multiple high-scoring thought nodes identified during the exploration, potentially originating from different branches or depths of the tree.
 
@@ -23,7 +28,7 @@ The `ToT_Coordinator` manages the following phases:
 2.  **Exploration Loop (Continues as long as active paths exist):**
     *   **Generation:** For each active node, calls the `Planner` agent to generate potential next thoughts (steps, sub-topics, questions). The number generated can be dynamic. Validates and adds new nodes with status 'generated'.
     *   **Evaluation:** For each newly generated node:
-        *   Calls the `Researcher` agent to gather relevant information.
+        *   Calls the `Researcher` agent (equipped with `google_search` tool) to gather relevant information.
         *   Calls the `Analyzer` and `Critic` agents to evaluate the thought's soundness and promise, considering the research findings. Scores and a **termination recommendation** (True/False) are extracted.
         *   Updates the node with scores, research findings, evaluation details, and the termination recommendation. Status becomes 'evaluated'.
     *   **Selection / Status Update:** Reviews all 'evaluated' nodes.
@@ -74,11 +79,30 @@ graph TD
     N --> Synthesizer_Final(Synthesizer);
 ```
 
+> **Warning: High Token Consumption**
+> This project involves multiple LLM calls per step in the Tree of Thoughts process (generation, research, analysis, critique). Running complex problems can consume a significant amount of tokens. Please monitor your usage and associated costs carefully.
+
 ## Setup and Usage
 
-(Instructions on how to set up and run the agent would go here, including required environment variables.)
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/FradSer/mas-tree-of-thought
+    cd mas-tree-of-thought
+    ```
+2.  **Set up environment variables:**
+    *   Navigate to the `multi_tool_agent` directory: `cd multi_tool_agent`
+    *   Copy the example environment file: `cp .env.example .env`
+    *   Edit the `.env` file and fill in your actual API keys, model configurations, and cloud project details (if applicable). Follow the comments within the file for guidance.
+3.  **Install dependencies using uv:**
+    ```bash
+    uv sync
+    ```
+4.  **Run the project:**
+    ```bash
+    adk web
+    ```
 
-**Required Environment Variables:**
+**Required Environment Variables (defined in `multi_tool_agent/.env`):**
 
 *   **LLM Configuration:**
     *   `PLANNER_MODEL_CONFIG`, `RESEARCHER_MODEL_CONFIG`, `ANALYZER_MODEL_CONFIG`, `CRITIC_MODEL_CONFIG`, `SYNTHESIZER_MODEL_CONFIG`, `COORDINATOR_MODEL_CONFIG`: Specify the model for each agent (e.g., `google:gemini-2.0-flash`, `openrouter:google/gemini-2.5-pro`, `openai:gpt-4o`). See `_configure_llm_models` in `agent.py` for details.
@@ -90,5 +114,3 @@ graph TD
 *   **Optional Rate Limiting (for Google AI Studio Free Tier):**
     *   `USE_FREE_TIER_RATE_LIMITING=true`: Set to enable delays between calls.
     *   `FREE_TIER_SLEEP_SECONDS=2.0`: Adjust the delay duration (default is 2 seconds).
-
-(Add specific commands for running the agent, e.g., using a CLI tool or integrating it into another application.)
