@@ -190,16 +190,19 @@ def _configure_llm_models() -> Tuple[
     Configure LLM models for each specialist agent and the coordinator.
 
     Reads configurations from environment variables (e.g., PLANNER_MODEL_CONFIG=provider:model_name).
-    Supported providers: 'google', 'openrouter'.
+    Supported providers: 'google', 'openrouter', 'openai'.
 
     Falls back to a default Google model if:
     - Environment variable is not set or invalid
     - OpenRouter is specified without an API key
+    - OpenAI is specified without required API key/base
 
     Environment Variables:
-    - <AGENT_NAME>_MODEL_CONFIG: Specifies provider and model (e.g., "openrouter:google/gemini-2.5-pro")
+    - <AGENT_NAME>_MODEL_CONFIG: Specifies provider and model (e.g., "openrouter:google/gemini-2.5-pro", "openai:gpt-4o")
     - GOOGLE_GENAI_USE_VERTEXAI: Set to "true" to use Vertex AI (requires GOOGLE_CLOUD_PROJECT/LOCATION)
     - OPENROUTER_API_KEY: Required for OpenRouter models
+    - OPENAI_API_KEY: Required for OpenAI models (or compatible endpoints)
+    - OPENAI_API_BASE: Required for OpenAI models (or compatible endpoints)
     - GOOGLE_API_KEY: Required for Google AI Studio models
     - GOOGLE_CLOUD_PROJECT: Required for Vertex AI
     - GOOGLE_CLOUD_LOCATION: Required for Vertex AI
@@ -214,6 +217,8 @@ def _configure_llm_models() -> Tuple[
     # Flags for API usage (Vertex vs Google AI Studio)
     use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY") # Added OpenAI Key check
+    openai_base = os.environ.get("OPENAI_API_BASE") # Added OpenAI Base check
 
     # Agent names must match the order in the return tuple
     agent_names = ["planner", "researcher", "analyzer", "critic", "synthesizer", "coordinator"]
@@ -244,6 +249,28 @@ def _configure_llm_models() -> Tuple[
                             _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
                     else:
                         logger.warning(f"  -> OpenRouter specified for {agent_name.capitalize()} ('{model_name}'), but OPENROUTER_API_KEY not found. Falling back to default ({default_google_model}).")
+                        final_config = default_google_model # Fallback
+                        _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
+
+                elif provider == "openai": # Added OpenAI provider block
+                    if openai_key and openai_base:
+                        try:
+                            # LiteLLM uses API key/base from env vars automatically when specified.
+                            # The model string often doesn't need the provider prefix if base/key are set.
+                            # Prepend 'openai/' to the model name for LiteLlm
+                            # This explicitly tells LiteLLM to use the OpenAI logic
+                            # and rely on OPENAI_API_KEY/OPENAI_API_BASE env vars.
+                            final_config = LiteLlm(model=f"openai/{model_name}") # Corrected line
+                            logger.info(f"  -> Configured {agent_name.capitalize()} for OpenAI compatible endpoint: openai/{model_name} (using OPENAI_API_KEY & OPENAI_API_BASE)")
+                        except Exception as e:
+                            logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} using OpenAI provider (openai/{model_name}): {e}. Falling back to default ({default_google_model}).")
+                            final_config = default_google_model # Fallback
+                            _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
+                    else:
+                        missing_vars = []
+                        if not openai_key: missing_vars.append("OPENAI_API_KEY")
+                        if not openai_base: missing_vars.append("OPENAI_API_BASE")
+                        logger.warning(f"  -> OpenAI provider specified for {agent_name.capitalize()} ('{model_name}'), but required environment variable(s) [{', '.join(missing_vars)}] not found. Falling back to default ({default_google_model}).")
                         final_config = default_google_model # Fallback
                         _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)
 
@@ -345,12 +372,26 @@ planner_agent = Agent(
     instruction=_create_agent_instruction(
         specialist_name="Strategic Planner",
         core_task=(
-            " 1. Read the planning instruction from session state with key 'planner_instruction'.\\n"
-            " 2. If no instruction is found, develop a general plan or roadmap.\\n"
-            " 3. **Crucially: If multiple viable strategies or paths exist, you MUST explicitly list them as distinct options** for the Coordinator to consider for branching.\\n"
-            " 4. Identify potential roadblocks or critical decision points within your plan.\\n"
-            " 5. Return ONLY the planning output, clearly indicating any distinct options found."
-        )
+            "Your primary role is to generate 'thoughts'. Remember, a 'thought' represents an intermediate step or a partial solution towards solving the overall problem.\\n"
+            " 1. Read the specific planning instruction provided (e.g., generate initial strategies, expand on a current thought).\\n"
+            " 2. Generate potential 'thoughts' (intermediate steps, partial solutions, strategies, next actions, or questions) based on the instruction.\\n"
+            " 3. **Crucially: If multiple viable strategies or paths exist, you MUST explicitly list them as distinct options/thoughts** for the Coordinator to consider for branching. Treat each distinct option as a separate 'thought'. **Ensure these thoughts represent genuinely different directions or approaches, not just variations of the same core idea.**\\n"
+            " 4. Identify potential roadblocks or critical decision points within your generated thoughts.\\n"
+            " 5. **Output Formatting:** Return ONLY the generated thoughts, each on a new line. Avoid introductory phrases or summaries.\\n"
+            " **Example Scenario 1 (Initial Strategies for 'Write a story about a lost dog'):**\\n"
+            "   Thought 1: Focus on the dog's perspective and journey home.\\n"
+            "   Thought 2: Focus on the owner's search and emotional state.\\n"
+            "   Thought 3: Introduce a kind stranger who helps the dog.\\n"
+            " **Example Scenario 2 (Next steps for 'Focus on the dog's perspective'):**\\n"
+            "   Thought 1: Describe the moment the dog realized it was lost.\\n"
+            "   Thought 2: Detail the dog's first encounter with an unfamiliar challenge (e.g., crossing a busy street).\\n"
+            "   Thought 3: Explore the dog's memories of its owner."
+
+
+        ),
+        # Note: The previous numbered list was integrated into the core_task description.
+        # Removed the explicit reading from session state here as the user indicated issues.
+        # The dynamic instructions in helper methods will still attempt to set state.
     ),
     input_schema=None,
     tools=[]
@@ -993,14 +1034,17 @@ class ToTBeamSearchCoordinator(BaseAgent):
             # Ask for a reasonable fixed number of initial strategies, e.g., 3
             num_initial_strategies = 3 # Define a fixed number
             planner_instruction = (
-                f"Your **sole task** right now is to generate exactly **{num_initial_strategies} distinct high-level strategies** "
-                f"to approach the problem: '{initial_problem}'.\n"
-                f"**CRITICAL FORMATTING REQUIREMENT:**\n"
-                f"1. Each strategy MUST be a concise phrase or sentence describing an approach.\n"
-                f"2. You MUST output *only* the strategies, each on a new line.\n"
-                f"3. Each line MUST start *exactly* with 'Strategy N: ' (e.g., 'Strategy 1: Analyze philosophical aspects.').\n"
-                f"**DO NOT** include any introductory text, explanations, definitions, or any other text before, between, or after the strategy list. "
-                f"Your entire output should consist only of the lines matching 'Strategy N: ...'."
+                f"Your **sole task** right now is to generate exactly **{num_initial_strategies} distinct high-level strategies ('thoughts')** "
+                f"to approach the problem: '{initial_problem}'. Remember, a 'thought' represents an intermediate step or a partial solution. **These {num_initial_strategies} thoughts should explore different directions.**\\n"
+                f"**CRITICAL FORMATTING REQUIREMENT:**\\n"
+                f"1. Each strategy/thought MUST be a concise phrase or sentence describing an approach.\\n"
+                f"2. You MUST output *only* the {num_initial_strategies} thoughts, each on a new line.\\n"
+                f"3. **DO NOT** include any introductory text, explanations, numbering (like 'Strategy N:'), or any other text before, between, or after the thought list. "
+                f"Your entire output should consist only of the {num_initial_strategies} lines, each representing a distinct initial thought/strategy.\\n"
+                f"**Example Output for 'Analyze climate change impact':**\\n"
+                f"Focus on economic impacts.\\n"
+                f"Analyze effects on biodiversity.\\n"
+                f"Investigate sea-level rise projections."
             )
             ctx.session.state["planner_instruction"] = planner_instruction
             # --- END OF REVISED INSTRUCTION ---
@@ -1155,12 +1199,17 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 planner_instruction = (
                     f"The current thought/strategy is: '{parent_thought}'. "
                     f"It is at depth {parent_depth} and received a score of {parent_score if parent_score is not None else 'N/A'}. "
-                    f"Based on this, generate exactly **{num_to_generate}** distinct and concrete **next steps, sub-topics, or specific questions** "
-                    f"to explore *within* this thought. Focus on quality and relevance.\n"
-                    f"**CRITICAL FORMATTING REQUIREMENTS:**\n"
-                    f"1. List each clearly on a new line.\n"
-                    f"2. Output *only* the {num_to_generate} items, one per line.\n"
-                    f"3. **DO NOT** include any introductory text, explanations, numbering, or any other text before, between, or after the list. Your entire output must be only the {num_to_generate} lines of next steps/sub-topics/questions."
+                    f"Based on this, generate exactly **{num_to_generate}** distinct and concrete **next thoughts** "
+                    f"(intermediate steps, partial solutions, sub-topics, or specific questions) to explore *within* this thought/strategy. "
+                    f"Focus on quality and relevance. Remember, a 'thought' represents an intermediate step or a partial solution. **Ensure these {num_to_generate} thoughts represent different directions for exploration.**\\n"
+                    f"**CRITICAL FORMATTING REQUIREMENTS:**\\n"
+                    f"1. List each clearly on a new line.\\n"
+                    f"2. Output *only* the {num_to_generate} thoughts, one per line.\\n"
+                    f"3. **DO NOT** include any introductory text, explanations, numbering, or any other text before, between, or after the list. Your entire output must be only the {num_to_generate} lines of next thoughts.\\n"
+                    f"**Example Input Thought:** 'Analyze effects on biodiversity'\\n"
+                    f"**Example Output Next Thoughts (if num_to_generate=2):**\\n"
+                    f"Identify key species impacted by rising temperatures.\\n"
+                    f"Research habitat loss in coastal regions."
                 )
                 ctx.session.state["planner_instruction"] = planner_instruction
                 
@@ -1524,6 +1573,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
     async def _synthesize_result(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
         """
         Synthesize final result from the best path in the thought tree.
+        Synthesize final result based on high-scoring thoughts identified during exploration.
 
         This method implements the final synthesis process:
         1. Best Path Selection:
@@ -1534,14 +1584,25 @@ class ToTBeamSearchCoordinator(BaseAgent):
            - Trace path from best node back to root
            - Build comprehensive path representation
            - Include scores and depth information
+        1. High-Scoring Node Selection:
+           - Filter all relevant nodes (evaluated, active, terminated_early) with scores.
+           - Select nodes exceeding a score threshold (e.g., 7.0).
+           - If none meet threshold, select top N highest-scoring nodes.
+           - Fallback to root if no scored nodes found.
+        2. Context Construction:
+           - Gather information from selected high-scoring nodes.
+           - Include the initial problem statement.
         3. Final Synthesis:
            - Call synthesizer agent with path context
+           - Call synthesizer agent with the context of high-scoring thoughts.
            - Generate coherent final answer
            - Handle potential synthesis failures
 
         Key Features:
         - Robust best node selection with fallbacks
         - Comprehensive path tracing and formatting
+        - Robust high-scoring node selection with threshold and fallback.
+        - Context includes multiple promising perspectives.
         - Error handling at each synthesis step
         - Detailed logging of synthesis process
 
@@ -1556,105 +1617,100 @@ class ToTBeamSearchCoordinator(BaseAgent):
             - Logs synthesis decisions and results
         """
         thought_tree = self._get_thought_tree(ctx)
-        active_beam = self._get_active_beam(ctx)
-        
+        active_beam = self._get_active_beam(ctx) # Keep active_beam for potential logging/context, but not primary selection
+
         # Initialize result in state with a default error value
         default_error_result = {"error": "Synthesis could not find a suitable result.", "output": ""}
         self._set_state_value(ctx, '_synthesize_result_result', default_error_result)
 
-        # --- Step 1: Find the best node ---
-        best_node_id = None
-        highest_score = -1.0
-        
-        # First check active beam nodes
-        if active_beam:
-            logger.info(f"[{self.name}] Looking for best node in active beam of {len(active_beam)} nodes.")
-            for node_id in active_beam:
-                node = thought_tree.get(node_id)
-                # Safely handle score comparison
-                node_score = node.get("evaluationScore")
-                if node and node_score is not None and node_score > highest_score:
-                    highest_score = node_score
-                    best_node_id = node_id
-        
-        # If no good node in active beam, check all evaluated/pruned nodes
-        if not best_node_id:
-            logger.info(f"[{self.name}] No suitable node in active beam, checking all nodes.")
-            for node_id, node in thought_tree.items():
-                # Safely handle score comparison
-                node_score = node.get("evaluationScore")
-                if node.get("status") in ["evaluated", "active", "pruned"] and node_score is not None and node_score > highest_score:
-                    highest_score = node_score
-                    best_node_id = node_id
+        # --- Step 1: Select High-Scoring Nodes ---
+        score_threshold = 7.0 # Define the score threshold for promising thoughts
+        top_n_fallback = 3 # Number of top nodes to use if threshold isn't met
 
-        # Fallback to root if needed
-        if not best_node_id:
-            logger.warning(f"[{self.name}] No evaluated nodes found. Using root node as fallback.")
-            best_node_id = "root"
+        # Filter relevant nodes with scores
+        candidate_nodes = []
+        for node_id, node_data in thought_tree.items():
+            if node_data.get('status') in ['evaluated', 'active', 'terminated_early'] and node_data.get('evaluationScore') is not None:
+                 candidate_nodes.append(node_data)
 
-        logger.info(f"[{self.name}] Selected best node for synthesis: {best_node_id} (Score: {highest_score:.2f})")
+        if not candidate_nodes:
+            logger.warning(f"[{self.name}] No nodes with evaluation scores found. Falling back to root node.")
+            selected_nodes = [thought_tree.get("root")] if "root" in thought_tree else []
+        else:
+             # Sort candidates by score (descending) for thresholding and fallback
+             candidate_nodes.sort(key=lambda x: x.get("evaluationScore", 0.0), reverse=True)
 
-        # --- Step 2: Trace path back to root ---
-        path_to_root = []
-        current_id = best_node_id
-        max_depth_found = 0
-        
-        while current_id:
-            node = thought_tree.get(current_id)
-            if node:
-                # Build a meaningful representation of this node in the path
-                node_info = (
-                    f"ID: {node.get('validatedThoughtId', current_id)}, "
-                    f"Depth: {node.get('depth', '?')}, "
-                    f"Score: {node.get('evaluationScore', 'N/A')}, "
-                    f"Thought: {node.get('thoughtContent', 'N/A')}"
-                )
-                path_to_root.append(node_info)
-                
-                # Track maximum depth
-                max_depth_found = max(max_depth_found, node.get('depth', 0))
-                
-                # Move to parent
-                current_id = node.get("parentId")
-            else:
-                logger.warning(f"[{self.name}] Node {current_id} referenced but not found in tree.")
-                break
-        
-        # Reverse to get root-to-leaf order
-        path_to_root.reverse()
-        path_str = "\n -> ".join(path_to_root)
-        
-        logger.info(f"[{self.name}] Found path of length {len(path_to_root)}, max depth {max_depth_found}")
+             # Apply threshold
+             selected_nodes = [node for node in candidate_nodes if node.get("evaluationScore", 0.0) >= score_threshold]
 
-        # Get the original problem for context
-        initial_problem = self._get_state_value(ctx, "initial_problem", "Unknown initial problem")
-        
-        # --- Step 3: Call Synthesizer ---
-        logger.info(f"[{self.name}] Calling synthesizer with the best path.")
-        try:
-            # Create synthesis instruction with context from the best path
-            synthesis_instruction = (
-                f"Synthesize the final answer or conclusion for the initial problem: '{initial_problem}'.\n\n"
-                f"The most promising path of thoughts is:\n{path_str}\n\n"
-                f"Based on this path and the overall goal, provide the final synthesized result. "
-                f"Be concise but comprehensive in your answer."
+             if not selected_nodes:
+                 logger.warning(f"[{self.name}] No nodes met score threshold {score_threshold}. Selecting top {top_n_fallback} nodes.")
+                 selected_nodes = candidate_nodes[:top_n_fallback] # Take the top N as fallback
+
+        if not selected_nodes:
+            logger.error(f"[{self.name}] Synthesis failed: No suitable nodes found even after fallback.")
+            yield Event(
+                 author=self.name,
+                 invocation_id=ctx.invocation_id,
+                 content=types.Content(parts=[types.Part(text="Synthesis failed: Could not identify any promising thoughts to synthesize from.")])
             )
-            
+            self._set_state_value(ctx, '_synthesize_result_result', {"error": "No promising thoughts found for synthesis.", "output": ""})
+            return
+
+        logger.info(f"[{self.name}] Selected {len(selected_nodes)} high-scoring nodes for synthesis.")
+
+        # --- Step 2: Construct Context for Synthesizer ---
+        initial_problem = self._get_state_value(ctx, "initial_problem", "Unknown initial problem")
+        synthesis_context_parts = [
+            f"Initial Problem: '{initial_problem}'\n",
+            "High-Scoring Thoughts Identified:"
+        ]
+
+        for node in selected_nodes:
+             node_info = (
+                 f"- ID: {node.get('validatedThoughtId', 'N/A')}, "
+                 f"Score: {node.get('evaluationScore', 'N/A'):.2f}, "
+                 f"Thought: {node.get('thoughtContent', 'N/A')}"
+             )
+             synthesis_context_parts.append(node_info)
+
+        synthesis_context = "\n".join(synthesis_context_parts)
+        logger.info(f"[{self.name}] Synthesis context constructed with {len(selected_nodes)} nodes.")
+        # Log the context for debugging if needed (can be verbose)
+        # logger.debug(f"[{self.name}] Synthesis Context:\n{synthesis_context}")
+
+
+        # --- Step 3: Call Synthesizer ---
+        logger.info(f"[{self.name}] Calling synthesizer with context from high-scoring thoughts.")
+        try:
+            # Create synthesis instruction based on multiple promising thoughts
+            synthesis_instruction = (
+                 f"Synthesize the final answer or conclusion for the initial problem based on the following promising thoughts identified during exploration:\n\n"
+                 f"{synthesis_context}\n\n"
+                 f"Integrate the insights from these thoughts to provide a comprehensive and coherent final result. "
+                 f"Address the initial problem directly."
+            )
+
             # Store instruction in session state for synthesizer
             ctx.session.state["synthesizer_instruction"] = synthesis_instruction
-            
+
             # Correct: Use async for to iterate over agent events
             synthesizer_output = ""
+            final_synthesizer_text = None # To store the final output text
             async for event in self._run_sub_agent_safely(self.synthesizer, ctx):
                 yield event
-                if event.content and event.content.parts:
-                    synthesizer_output = event.content.parts[0].text
+                # Capture the last non-empty model output as the final result
+                if event.author == self.synthesizer.name and event.role == 'model' and event.content and event.content.parts and event.content.parts[0].text:
+                     final_synthesizer_text = event.content.parts[0].text
+
+            # Use the captured final text
+            synthesizer_output = final_synthesizer_text if final_synthesizer_text is not None else "[Synthesizer returned empty output]"
 
             # Store result
             synthesizer_result = {"output": synthesizer_output}
             logger.info(f"[{self.name}] Synthesizer completed successfully.")
             self._set_state_value(ctx, '_synthesize_result_result', synthesizer_result)
-            
+
         except Exception as e:
             logger.error(f"[{self.name}] Synthesizer failed: {str(e)}")
             yield Event(
@@ -1662,10 +1718,10 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 invocation_id=ctx.invocation_id,
                 content=types.Content(parts=[types.Part(text=f"Synthesis failed: {str(e)}")])
             )
-            
+
             # Update error result with more details
             error_result = {
-                "error": f"Synthesizer failed: {str(e)}", 
+                "error": f"Synthesizer failed: {str(e)}",
                 "output": "Failed to generate final result due to an error."
             }
             self._set_state_value(ctx, '_synthesize_result_result', error_result)
