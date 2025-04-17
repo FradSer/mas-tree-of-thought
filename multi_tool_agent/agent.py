@@ -405,8 +405,8 @@ researcher_agent = Agent(
     instruction=_create_agent_instruction(
         specialist_name="Information Gatherer",
         core_task=(
-            " 1. Identify the specific information needed based on the instruction in session state key 'researcher_instruction'.\\n"
-            " 2. **Actively use the `google_search` tool** for external information gathering.\\n"
+            " 1. Read the specific research task provided by the Coordinator.\\n"
+            " 2. **Actively use the `google_search` tool** for external information gathering based on the task.\\n"
             " 3. Validate information where possible.\\n"
             " 4. Structure findings clearly.\\n"
             " 5. **Crucially: You MUST explicitly report any significant conflicting information, major uncertainties, or data points suggesting multiple possible interpretations.** These are vital signals for the Coordinator.\\n"
@@ -425,12 +425,13 @@ analyzer_agent = Agent(
     instruction=_create_agent_instruction(
         specialist_name="Core Analyst",
         core_task=(
-            " 1. Read the analysis instruction from session state with key 'analyzer_instruction'.\\n"
-            " 2. If no instruction is found, perform general analysis on the provided content.\\n"
+            " 1. Read the analysis task provided by the Coordinator (which includes the thought and research findings).\\n"
+            " 2. Analyze the soundness, feasibility, and logical consistency of the thought, considering the research findings.\\n"
             " 3. **Crucially: Identify any invalidated assumptions, logical inconsistencies, or contradictions**, especially if they impact previous conclusions.\\n"
             " 4. Generate concise insights based on your analysis.\\n"
             " 5. **Provide a structured evaluation score:** At the end of your response, include a line formatted exactly as: `Evaluation Score: [score]/10`, where [score] is an integer from 0 (lowest promise/soundness) to 10 (highest promise/soundness) based on your analysis.\\n"
-            " 6. Return ONLY the analysis, insights, highlighted inconsistencies, and the structured score line."
+            " 6. **Provide a termination recommendation:** Include a line formatted exactly as: `Termination Recommendation: [True/False]` (True if path should stop, False if it should continue).\\n"
+            " 7. Return ONLY the analysis, insights, highlighted inconsistencies, the score line, and the termination recommendation line."
         )
     ),
     input_schema=None,
@@ -445,13 +446,14 @@ critic_agent = Agent(
     instruction=_create_agent_instruction(
         specialist_name="Quality Controller (Critic)",
         core_task=(
-            " 1. Read the critique instruction from session state with key 'critic_instruction'.\\n"
-            " 2. If no instruction is found, provide a general critique of the content.\\n"
+            " 1. Read the critique task provided by the Coordinator (which includes the thought and research findings).\\n"
+            " 2. Critically evaluate the thought for flaws, biases, or weaknesses, considering the research findings.\\n"
             " 3. Identify potential biases, flaws, logical fallacies, or weaknesses.\\n"
             " 4. **Crucially: Suggest specific improvements AND propose at least one concrete alternative approach or direction.** If a major flaw invalidates a previous thought, clearly state this and suggest targeting that thought for revision.\\n"
             " 5. Formulate a constructive response containing your evaluation, identified flaws, and mandatory suggestions/alternatives.\\n"
             " 6. **Provide a structured evaluation score:** At the end of your response, include a line formatted exactly as: `Evaluation Score: [score]/10`, where [score] is an integer from 0 (lowest viability/promise) to 10 (highest viability/promise) based on your critique.\\n"
-            " 7. Return ONLY the critique, suggestions/alternatives, and the structured score line."
+            " 7. **Provide a termination recommendation:** Include a line formatted exactly as: `Termination Recommendation: [True/False]` (True if path should stop, False if it should continue).\\n"
+            " 8. Return ONLY the critique, suggestions/alternatives, the score line, and the termination recommendation line."
         )
     ),
     input_schema=None,
@@ -466,8 +468,8 @@ synthesizer_agent = Agent(
     instruction=_create_agent_instruction(
         specialist_name="Integration Specialist",
         core_task=(
-            " 1. Read the synthesis instruction from session state with key 'synthesizer_instruction'.\\n"
-            " 2. If no instruction is found, integrate the available information in a general way.\\n"
+            " 1. Read the synthesis task provided by the Coordinator (which includes the initial problem and high-scoring thoughts).\\n"
+            " 2. Integrate the information from the provided thoughts to address the initial problem.\\n"
             " 3. Connect elements, identify overarching themes, draw conclusions, or formulate the final answer as requested.\\n"
             " 4. Distill inputs into clear, structured insights.\\n"
             " 5. Formulate a response presenting the synthesized information or conclusion.\\n"
@@ -480,7 +482,7 @@ synthesizer_agent = Agent(
 
 # --- Custom Coordinator Agent Definition ---
 
-class ToTBeamSearchCoordinator(BaseAgent):
+class ToTCoordinator(BaseAgent):
     """
     Tree of Thoughts (ToT) Coordinator with Beam Search Implementation.
 
@@ -751,24 +753,23 @@ class ToTBeamSearchCoordinator(BaseAgent):
         return False # Default to False if not explicitly found
 
     # --- Helper method to safely run Sub Agents and filter empty model events ---
-    async def _run_sub_agent_safely(self, agent: LlmAgent, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
+    async def _run_sub_agent_safely(self, agent: LlmAgent, ctx: InvocationContext, dynamic_instruction: str | None = None) -> AsyncGenerator[Event, None]:
         """
-        Safely execute a sub-agent while handling rate limits and filtering empty events.
+        Safely execute a sub-agent, passing dynamic instruction via ctx.user_content.
 
-        This wrapper provides:
-        1. Rate limiting for free tier API usage
-        2. Empty event filtering to prevent history pollution
-        3. Consistent event handling across all agent types
+        Handles rate limits and filters empty model events.
 
         Args:
             agent (LlmAgent): The specialist agent to run
-            ctx (InvocationContext): Current invocation context
+            ctx (InvocationContext): Current invocation context (user_content will be temporarily modified)
+            dynamic_instruction (str | None, optional): Specific instruction/task for this run.
 
         Yields:
             Event: Valid events from the sub-agent execution
 
         Note:
-            Rate limiting is only applied for Google AI Studio models when enabled
+            Rate limiting is only applied for Google AI Studio models when enabled.
+            This method temporarily REPLACES ctx.user_content for the sub-agent call.
         """
         # --- Rate Limiting Check --- 
         is_google_studio_model = (isinstance(agent.model, str) and 
@@ -779,18 +780,60 @@ class ToTBeamSearchCoordinator(BaseAgent):
             logger.info(f"[{self.name}] Rate limit active: Sleeping for {sleep_duration:.1f}s before calling {agent.name}")
             time.sleep(sleep_duration)
 
-        # Execute agent and handle events
-        async for event in agent.run_async(ctx):
-            if hasattr(event, 'role') and event.role == 'model':
-                is_empty_model_event = (
-                    event.content and
-                    not event.content.parts
-                )
-                if is_empty_model_event:
-                    logger.warning(f"[{self.name}] Filtering empty model event from {agent.name}")
-                    continue
+        # --- Context Modification --- 
+        original_user_content = None
+        has_original_user_content = False
+        if hasattr(ctx, 'user_content'):
+            original_user_content = ctx.user_content
+            has_original_user_content = True
+        
+        temp_user_content = None
+        if dynamic_instruction:
+            temp_user_content = types.Content(parts=[types.Part(text=dynamic_instruction)])
+        else:
+            # If no dynamic instruction, we might want to pass empty content 
+            # or the original, depending on expected agent behavior.
+            # Passing None might be safest if agent expects optional content.
+            # For now, let's ensure user_content exists if we modify it.
+            # If dynamic_instruction is None, we won't modify user_content.
+            pass 
 
-            yield event
+        try:
+            # Temporarily set user_content for this specific run
+            if dynamic_instruction:
+                logger.debug(f"[{self.name}] Temporarily setting ctx.user_content for {agent.name}")
+                ctx.user_content = temp_user_content
+            
+            # Execute agent using the modified context
+            # Pass ctx as the first positional argument
+            async for event in agent.run_async(ctx): 
+                if hasattr(event, 'role') and event.role == 'model':
+                    is_empty_model_event = (
+                        event.content and
+                        not event.content.parts
+                    )
+                    if is_empty_model_event:
+                        logger.warning(f"[{self.name}] Filtering empty model event from {agent.name}")
+                        continue
+                yield event
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Error during sub-agent run ({agent.name}): {e}")
+            yield Event(
+                author=self.name,
+                invocation_id=ctx.invocation_id,
+                content=types.Content(parts=[types.Part(text=f"Error calling agent {agent.name}: {str(e)}")]),
+            )
+        finally:
+            # Restore original user_content
+            if dynamic_instruction: # Only restore if we actually changed it
+                logger.debug(f"[{self.name}] Restoring original ctx.user_content for {agent.name}.")
+                if has_original_user_content:
+                    ctx.user_content = original_user_content
+                elif hasattr(ctx, 'user_content'): # If it didn't exist before, remove it? Or set to None?
+                     # Setting to None might be safer if the attribute is expected
+                     ctx.user_content = None 
+                     # Alternatively, del ctx.user_content if possible/safe
 
     # --- Core Execution Logic ---
     @override
@@ -1051,7 +1094,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
 
             planner_output = ""
             logger.info(f"[{self.name}] Sending request to Planner for initial strategies...")
-            async for event in self._run_sub_agent_safely(self.planner, ctx):
+            async for event in self._run_sub_agent_safely(self.planner, ctx, dynamic_instruction=planner_instruction):
                 yield event
                 if event.content and event.content.parts:
                     planner_output = event.content.parts[0].text
@@ -1214,7 +1257,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 ctx.session.state["planner_instruction"] = planner_instruction
                 
                 planner_output = ""
-                async for event in self._run_sub_agent_safely(self.planner, ctx):
+                async for event in self._run_sub_agent_safely(self.planner, ctx, dynamic_instruction=planner_instruction):
                     yield event
                     if event.content and event.content.parts:
                         planner_output = event.content.parts[0].text
@@ -1354,7 +1397,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 logger.info(f"[{self.name}] Calling Researcher for node {node_id}...")
                 current_research_output = ""
                 final_research_text = None
-                async for event in self._run_sub_agent_safely(self.researcher, ctx):
+                async for event in self._run_sub_agent_safely(self.researcher, ctx, dynamic_instruction=research_instruction):
                     yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
                         if final_research_text is None:
@@ -1401,7 +1444,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 logger.info(f"[{self.name}] Calling Analyzer for node {node_id} with research context...")
                 current_analyzer_output = ""
                 final_analyzer_text = None
-                async for event in self._run_sub_agent_safely(self.analyzer, ctx):
+                async for event in self._run_sub_agent_safely(self.analyzer, ctx, dynamic_instruction=analyzer_instruction):
                     yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
                          if final_analyzer_text is None:
@@ -1437,7 +1480,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
                 logger.info(f"[{self.name}] Calling Critic for node {node_id} with research context...")
                 current_critic_output = ""
                 final_critic_text = None
-                async for event in self._run_sub_agent_safely(self.critic, ctx):
+                async for event in self._run_sub_agent_safely(self.critic, ctx, dynamic_instruction=critic_instruction):
                     yield event
                     if event.content and event.content.parts and event.content.parts[0].text:
                          if final_critic_text is None:
@@ -1697,7 +1740,7 @@ class ToTBeamSearchCoordinator(BaseAgent):
             # Correct: Use async for to iterate over agent events
             synthesizer_output = ""
             final_synthesizer_text = None # To store the final output text
-            async for event in self._run_sub_agent_safely(self.synthesizer, ctx):
+            async for event in self._run_sub_agent_safely(self.synthesizer, ctx, dynamic_instruction=synthesis_instruction):
                 yield event
                 # Capture the last non-empty model output as the final result
                 if event.author == self.synthesizer.name and event.role == 'model' and event.content and event.content.parts and event.content.parts[0].text:
@@ -1734,7 +1777,7 @@ validator_tool = FunctionTool(validate_thought_node_data)
 
 # 2. Create our custom ToT Beam Search Coordinator agent
 # This demonstrates the pattern from the StoryFlowAgent example
-root_agent = ToTBeamSearchCoordinator(
+root_agent = ToTCoordinator(
     name="ToT_Coordinator",
     planner=planner_agent,
     researcher=researcher_agent,
