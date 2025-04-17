@@ -1743,7 +1743,7 @@ class ToTCoordinator(BaseAgent):
             async for event in self._run_sub_agent_safely(self.synthesizer, ctx, dynamic_instruction=synthesis_instruction):
                 yield event
                 # Capture the last non-empty model output as the final result
-                if event.author == self.synthesizer.name and event.role == 'model' and event.content and event.content.parts and event.content.parts[0].text:
+                if hasattr(event, 'role') and event.role == 'model' and event.author == self.synthesizer.name and event.content and event.content.parts and event.content.parts[0].text:
                      final_synthesizer_text = event.content.parts[0].text
 
             # Use the captured final text
