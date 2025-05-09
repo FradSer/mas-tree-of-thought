@@ -1,0 +1,61 @@
+---
+description: 
+globs: multi_tool_agent/agent.py
+alwaysApply: false
+---
+# Agent.py Structure and Purpose
+
+This rule describes the `[multi_tool_agent/agent.py](mdc:multi_tool_agent/agent.py)` file, which implements a multi-agent system based on the Tree of Thoughts (ToT) methodology.
+
+## Key Components:
+
+1.  **Data Models**:
+    *   `ThoughtData`: A Pydantic model defining the structure for individual nodes in the Tree of Thoughts. It includes fields like `parentId`, `thoughtId`, `thought`, `evaluationScore`, `status`, and `depth`.
+
+2.  **Validation Function**:
+    *   `validate_thought_node_data`: A function tool used to validate the metadata of thought nodes before they are added to the tree. It ensures data integrity using the `ThoughtData` model.
+
+3.  **LLM Configuration**:
+    *   `_configure_llm_models()`: A helper function that configures the Large Language Models (LLMs) for each specialist agent and the coordinator. It reads model configurations from environment variables and supports providers like Google, OpenRouter, and OpenAI.
+    *   `_log_google_credential_warnings()`: A helper to log warnings if necessary Google credentials are not found.
+
+4.  **Specialist Agents**:
+    These are instances of `google.adk.agents.Agent` with specific instructions and potentially tools, configured with models determined by `_configure_llm_models()`.
+    *   `planner_agent`: Develops strategic plans, generates "thoughts" (intermediate steps or partial solutions), and identifies alternative options.
+    *   `researcher_agent`: Gathers and validates information using the `google_search` tool, highlighting conflicts and uncertainties.
+    *   `analyzer_agent`: Performs analysis on thoughts, identifies inconsistencies/assumptions, and provides a structured evaluation score and termination recommendation.
+    *   `critic_agent`: Critically evaluates thoughts for flaws, biases, or weaknesses, suggests improvements/alternatives, and also provides an evaluation score and termination recommendation.
+    *   `synthesizer_agent`: Integrates information from high-scoring thoughts to form conclusions or the final answer.
+
+5.  **Coordinator Agent (`ToTCoordinator`)**:
+    *   This is a custom agent inheriting from `google.adk.agents.BaseAgent`.
+    *   It orchestrates the entire ToT workflow, managing the specialist agents.
+    *   **Core Logic**:
+        *   `__init__`: Initializes the coordinator, sub-agents, and configurations (like rate limiting).
+        *   State Management Helpers (`_get_state_value`, `_set_state_value`, `_get_thought_tree`, `_get_active_beam`, `_set_active_beam`, `_update_node`): Manage the workflow's state, including the thought tree and active beam.
+        *   Score/Recommendation Extraction (`_extract_score`, `_extract_termination_recommendation`): Parse scores and termination flags from agent outputs.
+        *   Sub-agent Execution (`_run_sub_agent_safely`): A helper to run specialist agents, handle rate limiting, and manage context.
+        *   `_run_async_impl`: The main orchestration method implementing the ToT workflow phases:
+            1.  **Initialization (`_initialize_workflow`)**: Creates the root node and generates initial strategies using the `planner_agent`.
+            2.  **Exploration Loop**: Iteratively expands the thought tree.
+                *   `_generate_next_thoughts`: Uses the `planner_agent` to generate subsequent thoughts from active nodes.
+                *   `_evaluate_thoughts`: Uses `researcher_agent`, `analyzer_agent`, and `critic_agent` to evaluate newly generated thoughts.
+                *   `_select_next_beam`: Selects the most promising thoughts to continue exploring based on evaluation and termination recommendations.
+            3.  **Synthesis (`_synthesize_result`)**: Uses the `synthesizer_agent` to generate a final answer from the best path(s) or high-scoring thoughts identified.
+    *   The `ToTCoordinator` uses the `validator_tool` (an instance of `FunctionTool` wrapping `validate_thought_node_data`) to ensure the structural integrity of thoughts.
+
+6.  **Instantiation**:
+    *   The script concludes by instantiating the `validator_tool` and the `root_agent` (an instance of `ToTCoordinator`) with all the specialist agents and the coordinator model configuration.
+
+## Workflow Overview:
+
+The system operates by:
+1.  The `ToTCoordinator` initializes a problem.
+2.  The `planner_agent` proposes initial approaches (thoughts).
+3.  These thoughts are then expanded by the `planner_agent` in subsequent steps.
+4.  Each new thought is researched by the `researcher_agent`.
+5.  The `analyzer_agent` and `critic_agent` evaluate the thought based on its content and research findings, providing scores and termination recommendations.
+6.  The `ToTCoordinator` selects promising thoughts to form a "beam" for further exploration or decides to terminate paths.
+7.  Once exploration is complete (e.g., paths are terminated or a depth limit is conceptually reached), the `synthesizer_agent` combines the most promising information to produce a final result.
+
+This file is central to the multi-tool agent's problem-solving capabilities, enabling a structured and evaluative approach to complex tasks.
