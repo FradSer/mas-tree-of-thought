@@ -1,11 +1,11 @@
 [project]
 name = "adk-mas-sequential-thinking"
 version = "0.1.0"
-description = "Add your description here"
+description = "A multi-agent system coordinated by a root agent (ToT_Coordinator) that manages a Tree of Thoughts (ToT) using an LLM-driven evaluation process to explore potential solutions for complex problems."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "google-adk>=0.1.0",
+    "google-adk>=0.5.0",
     "litellm>=1.66.0",
     "pydantic>=2.11.3",
     "python-dotenv>=1.1.0",
