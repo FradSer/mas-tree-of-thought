@@ -4,10 +4,10 @@ import logging
 from unittest.mock import patch, MagicMock
 
 from google.adk.models.lite_llm import LiteLlm
-from multi_tool_agent.llm_config import _configure_llm_models, _log_google_credential_warnings
+from mas_tree_of_thought.llm_config import _configure_llm_models, _log_google_credential_warnings
 
-# Assuming the default model is gemini-1.5-flash as per the provided llm_config.py
-EXPECTED_DEFAULT_GOOGLE_MODEL = "gemini-1.5-flash"
+# Assuming the default model is gemini-2.0-flash as per the provided llm_config.py
+EXPECTED_DEFAULT_GOOGLE_MODEL = "gemini-2.0-flash"
 
 # Agent names as used in environment variables (uppercase) and in the function's return tuple (lowercase)
 AGENT_NAMES_ENV = ["PLANNER", "RESEARCHER", "ANALYZER", "CRITIC", "SYNTHESIZER", "COORDINATOR"]
@@ -26,7 +26,7 @@ def get_configs_as_dict(configs_tuple):
 
 def test_default_models_when_no_env_vars_set():
     with patch.dict(os.environ, {}, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings') as mock_log_warnings:
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings') as mock_log_warnings:
             configs = _configure_llm_models()
             configs_dict = get_configs_as_dict(configs)
 
@@ -40,7 +40,7 @@ def test_google_model_configuration_specific_agent():
         "GOOGLE_API_KEY": "test_google_key"
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings') as mock_log_warnings:
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings') as mock_log_warnings:
             configs = _configure_llm_models()
             configs_dict = get_configs_as_dict(configs)
 
@@ -76,7 +76,7 @@ def test_openrouter_model_with_key():
         "OPENROUTER_API_KEY": "fake_or_key"
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'): # Mock to avoid its logic
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'): # Mock to avoid its logic
             configs = _configure_llm_models()
             configs_dict = get_configs_as_dict(configs)
 
@@ -92,13 +92,13 @@ def test_openrouter_model_no_key_fallback():
         # OPENROUTER_API_KEY is missing
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning: # Capture general logging.warning
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
 
     assert configs_dict["analyzer"] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    mock_warning.assert_any_call("OPENROUTER_API_KEY not found. Falling back to default for ANALYZER.")
+    mock_warning.assert_any_call("  -> OpenRouter specified for Analyzer ('some/analyzer-model'), but OPENROUTER_API_KEY not found. Falling back to default (gemini-2.0-flash).")
 
 def test_openai_model_with_key_and_base():
     env_vars = {
@@ -107,7 +107,7 @@ def test_openai_model_with_key_and_base():
         "OPENAI_API_BASE": "http://localhost:1234/v1"
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             configs = _configure_llm_models()
             configs_dict = get_configs_as_dict(configs)
 
@@ -125,13 +125,13 @@ def test_openai_model_no_key_fallback():
         # OPENAI_API_KEY is missing
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning:
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
 
     assert configs_dict["critic"] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    mock_warning.assert_any_call("OPENAI_API_KEY not found. Falling back to default for CRITIC.")
+    mock_warning.assert_any_call("  -> OpenAI provider specified for Critic ('gpt-4o'), but required environment variable(s) [OPENAI_API_KEY] not found. Falling back to default (gemini-2.0-flash).")
 
 def test_openai_model_no_base_fallback():
     env_vars = {
@@ -140,36 +140,36 @@ def test_openai_model_no_base_fallback():
         # OPENAI_API_BASE is missing
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning:
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
     
     assert configs_dict["critic"] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    mock_warning.assert_any_call("OPENAI_API_BASE not found. Falling back to default for CRITIC.")
+    mock_warning.assert_any_call("  -> OpenAI provider specified for Critic ('gpt-4o'), but required environment variable(s) [OPENAI_API_BASE] not found. Falling back to default (gemini-2.0-flash).")
 
 
 def test_invalid_config_format_fallback():
     env_vars = {"SYNTHESIZER_MODEL_CONFIG": "badformatnoclon"}
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning:
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
 
     assert configs_dict["synthesizer"] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    mock_warning.assert_any_call("Invalid model configuration format for SYNTHESIZER: badformatnoclon. Expected 'provider:model_name'. Falling back to default.")
+    mock_warning.assert_any_call("  -> Invalid format in SYNTHESIZER_MODEL_CONFIG (expected 'provider:model_name'). Falling back to default (gemini-2.0-flash).")
 
 def test_unsupported_provider_fallback():
     env_vars = {"COORDINATOR_MODEL_CONFIG": "unknownprovider:some-model"}
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning:
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
     
     assert configs_dict["coordinator"] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    mock_warning.assert_any_call("Unsupported provider 'unknownprovider' for COORDINATOR. Falling back to default.")
+    mock_warning.assert_any_call("  -> Invalid provider 'unknownprovider' in COORDINATOR_MODEL_CONFIG. Falling back to default (gemini-2.0-flash).")
 
 def test_mixed_configurations():
     env_vars = {
@@ -183,7 +183,7 @@ def test_mixed_configurations():
         # RESEARCHER, SYNTHESIZER, COORDINATOR will use default
     }
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings') as mock_google_warnings:
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings') as mock_google_warnings:
             configs = _configure_llm_models()
             configs_dict = get_configs_as_dict(configs)
 
@@ -216,13 +216,13 @@ def test_malformed_model_config_fallback(invalid_config_value):
     agent_to_test = "PLANNER"
     env_vars = {f"{agent_to_test}_MODEL_CONFIG": invalid_config_value}
     with patch.dict(os.environ, env_vars, clear=True):
-        with patch('multi_tool_agent.llm_config._log_google_credential_warnings'):
+        with patch('mas_tree_of_thought.llm_config._log_google_credential_warnings'):
             with patch('logging.warning') as mock_warning:
                 configs = _configure_llm_models()
                 configs_dict = get_configs_as_dict(configs)
 
     assert configs_dict[agent_to_test.lower()] == EXPECTED_DEFAULT_GOOGLE_MODEL
-    expected_message = f"Invalid model configuration format for {agent_to_test}: {invalid_config_value}. Expected 'provider:model_name'. Falling back to default."
+    expected_message = "  -> Invalid provider '' in PLANNER_MODEL_CONFIG. Falling back to default (gemini-2.0-flash)."
     mock_warning.assert_any_call(expected_message)
 
 # Test for _log_google_credential_warnings

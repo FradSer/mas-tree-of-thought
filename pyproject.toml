@@ -1,7 +1,7 @@
 [project]
-name = "adk-mas-sequential-thinking"
+name = "mas-tree-of-thought"
 version = "0.1.0"
-description = "A multi-agent system coordinated by a root agent (ToT_Coordinator) that manages a Tree of Thoughts (ToT) using an LLM-driven evaluation process to explore potential solutions for complex problems."
+description = "A multi-agent system that implements Tree of Thoughts (ToT) methodology, where multiple agents collaborate under a coordinator to solve complex problems through structured reasoning and LLM-powered evaluation."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,6 +18,5 @@ test = [
 ]
 
 [build-system]
-requires = ["uv>=0.1.17"]
-build-backend = "uv"
-backend-path = "."
+requires = ["uv_build>=0.6.9"]
+build-backend = "uv_build"

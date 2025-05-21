@@ -2,14 +2,14 @@ import pytest
 from unittest.mock import patch
 from datetime import datetime
 
-from multi_tool_agent.instructions import _create_agent_instruction
+from mas_tree_of_thought.instructions import _create_agent_instruction
 
 @pytest.fixture
 def mock_datetime_now():
     # A fixed datetime object to ensure reproducible tests
     fixed_datetime = datetime(2024, 7, 27, 10, 30, 0)
     # Patching datetime specifically within the module where it's used
-    with patch('multi_tool_agent.instructions.datetime') as mock_datetime_module:
+    with patch('mas_tree_of_thought.instructions.datetime') as mock_datetime_module:
         mock_datetime_module.now.return_value = fixed_datetime
         yield fixed_datetime.strftime('%Y-%m-%d %H:%M:%S')
 

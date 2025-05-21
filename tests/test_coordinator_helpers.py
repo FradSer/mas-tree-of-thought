@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
-from multi_tool_agent.coordinator import ToTCoordinator
-from multi_tool_agent.utils.validation import validate_thought_node_data # For validator mock
+from mas_tree_of_thought.coordinator import ToTCoordinator
+from mas_tree_of_thought.validation import validate_thought_node_data # For validator mock
 
 @pytest.fixture
 def coordinator_instance():
@@ -18,7 +18,7 @@ def coordinator_instance():
         critic=MagicMock(),
         synthesizer=MagicMock(),
         validator=mock_validator, # Pass the mocked validator
-        model="gemini-1.5-flash"  # Using a string model ID as it's simpler
+        model="gemini-2.0-flash"  # Using a string model ID as it's simpler
     )
 
 # Tests for _extract_score

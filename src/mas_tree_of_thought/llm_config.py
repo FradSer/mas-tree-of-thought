@@ -71,10 +71,10 @@ def _configure_llm_models() -> Tuple[
                 if provider == "openrouter":
                     if openrouter_key:
                         try:
-                            final_config = LiteLlm(model=model_name)
-                            logger.info(f"  -> Configured {agent_name.capitalize()} for OpenRouter: {model_name}")
+                            final_config = LiteLlm(model=f"openrouter/{model_name}")
+                            logger.info(f"  -> Configured {agent_name.capitalize()} for OpenRouter: openrouter/{model_name}")
                         except Exception as e:
-                            logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} ({model_name}): {e}. Falling back to default ({default_google_model}).")
+                            logger.error(f"  -> Failed to configure LiteLlm for {agent_name.capitalize()} (openrouter/{model_name}): {e}. Falling back to default ({default_google_model}).")
                             final_config = default_google_model # Fallback
                             # Log fallback credential warnings
                             _log_google_credential_warnings(use_vertex, default_google_model, is_fallback=True)

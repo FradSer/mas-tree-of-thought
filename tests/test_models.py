@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from multi_tool_agent.models import ThoughtData
+from mas_tree_of_thought.models import ThoughtData
 
 # Valid Data Scenarios
 def test_thought_data_valid_root_node():

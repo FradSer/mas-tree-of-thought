@@ -1,5 +1,5 @@
 import pytest
-from multi_tool_agent.validation import validate_thought_node_data
+from mas_tree_of_thought.validation import validate_thought_node_data
 # from pydantic import ValidationError # Not directly needed if validate_thought_node_data handles it
 # from multi_tool_agent.models import ThoughtData # Not directly needed for these tests
 
