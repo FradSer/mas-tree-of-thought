@@ -10,3 +10,14 @@ dependencies = [
     "pydantic>=2.11.3",
     "python-dotenv>=1.1.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0"
+]
+
+[build-system]
+requires = ["uv>=0.1.17"]
+build-backend = "uv"
+backend-path = "."
