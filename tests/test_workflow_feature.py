@@ -929,7 +929,6 @@ def run_worktree_agent(git_repo):
 
     async def script():
         await wf.agent("inspect", isolation="worktree", label="inspect")
-        return None
 
     with patch("dialectica.agent_runtime.run_agent", fake):
         asyncio.run(Workflow(script, journal_dir=root / "journals").run())

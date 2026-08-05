@@ -114,7 +114,7 @@ def run_tot(nums: str, oracle_llm):
     numbers = tuple(int(x) for x in nums.split())
     agent = create_agent(role="Generator", role_name="Solver")
     with patch("dialectica.agent_runtime.run_agent", oracle_llm):
-        expr, calls = asyncio.run(solve_tot(agent, numbers, beam=5))
+        expr, _calls = asyncio.run(solve_tot(agent, numbers, beam=5))
     return expr, numbers
 
 
