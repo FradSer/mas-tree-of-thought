@@ -94,7 +94,7 @@ def _wire_env() -> None:
     os.environ.setdefault("DEFAULT_MODEL_CONFIG", "openai:qwen3.6-35b-a3b")
     os.environ.setdefault("JUDGE_MODEL_CONFIG", "openai:gpt-5.5")
     os.environ.setdefault("DIALECTICA_DISABLE_THINKING", "true")
-    os.environ.setdefault("DIALECTICA_WORKFLOW_CONCURRENCY", "4")
+    os.environ.setdefault("DIALECTICA_WORKFLOW_CONCURRENCY", "2")
 
 
 async def dialectic_arm(problem: str) -> str:

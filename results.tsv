@@ -1,3 +1,5 @@
 commit	score	status	description
 BASELINE	-0.500	keep	unmodified dialectic, scored gpt-5.5 judge, 3 meta problems (dial_matched NET mean)
 EXP1	-0.233	keep	port reflection synthesis sharpness (ONE binding decision + trigger + carry numbers) into SYNTHESIS_PROMPT; improved from -0.500
+EXP2	-0.333	discard	sharpened THESIS too (added DOMINATE rules to THESIS_PROMPT); regressed from -0.233, reverted to exp1 state
+EXP3	+0.100	keep	raise max_rounds default to 5 (deeper spiral); dialectic now BEATS matched baseline (+0.100); improved from -0.233

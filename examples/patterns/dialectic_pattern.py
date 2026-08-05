@@ -107,7 +107,7 @@ class DialecticEngine:
         self,
         problem: str,
         criteria: str = DEFAULT_CRITERIA,
-        max_rounds: int = 3,
+        max_rounds: int = 5,
         perspectives: int = 1,
         model_config: Optional[str] = None,
         discriminator_model: Optional[str] = None,
@@ -307,7 +307,7 @@ class DialecticEngine:
 def create_dialectic_engine(
     problem: str,
     criteria: Optional[str] = None,
-    max_rounds: int = 3,
+    max_rounds: int = 5,
     perspectives: int = 1,
     model_config: Optional[str] = None,
     discriminator_model: Optional[str] = None,
