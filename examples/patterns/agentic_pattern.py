@@ -13,7 +13,7 @@ tools — a workflow stage with no tools is just a pure-LLM call and ties/loses
 like every other scaffold in this repo.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from dialectica import workflow as wf
 
@@ -35,7 +35,7 @@ class AgenticEngine:
         self,
         task: str,
         tools: list,
-        model_config: Optional[str],
+        model_config: str | None,
         instructions: str,
     ):
         self.task = task
@@ -69,7 +69,7 @@ class AgenticEngine:
 def create_agentic_engine(
     task: str,
     tools: list,
-    model_config: Optional[str] = None,
+    model_config: str | None = None,
     instructions: str = "",
 ) -> AgenticEngine:
     """Wire a tool-using workflow stage for ``task``.

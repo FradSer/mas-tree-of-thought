@@ -24,8 +24,8 @@ not reproduced here.
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from dialectica import workflow as wf
 
@@ -175,9 +175,9 @@ class Coordinator:
         beam_width: int = 2,
         max_gan_rounds: int = 2,
         score_threshold: float = 7.0,
-        synthesizer_model: Optional[str] = None,
-        gan_score_threshold: Optional[float] = None,
-        criteria: Optional[str] = None,
+        synthesizer_model: str | None = None,
+        gan_score_threshold: float | None = None,
+        criteria: str | None = None,
         structured_output: bool = True,
     ):
         self.problem = problem
@@ -262,7 +262,7 @@ class Coordinator:
         """Execute the full search and return the answer plus tree and stats."""
 
         async def script() -> dict[str, Any]:
-            start_time = datetime.now()
+            start_time = datetime.now(tz=UTC)
 
             logger.info("Phase 1: Initializing thought tree")
             await self._initialize()
@@ -273,7 +273,7 @@ class Coordinator:
             logger.info("Phase 3: Synthesizing final answer")
             final_answer = await self._synthesize()
 
-            duration = (datetime.now() - start_time).total_seconds()
+            duration = (datetime.now(tz=UTC) - start_time).total_seconds()
             return {
                 "final_answer": final_answer,
                 "thought_tree": {
@@ -439,9 +439,9 @@ def create_coordinator(
     beam_width: int = 2,
     max_gan_rounds: int = 2,
     score_threshold: float = 7.0,
-    synthesizer_model: Optional[str] = None,
-    gan_score_threshold: Optional[float] = None,
-    criteria: Optional[str] = None,
+    synthesizer_model: str | None = None,
+    gan_score_threshold: float | None = None,
+    criteria: str | None = None,
     structured_output: bool = True,
 ) -> Coordinator:
     """Wire a Coordinator with the default beam-search + GAN-refinement pattern.
@@ -470,8 +470,8 @@ Engine = Coordinator
 
 
 __all__ = [
-    "create_engine",
+    "Coordinator",
     "Engine",
     "create_coordinator",
-    "Coordinator",
+    "create_engine",
 ]

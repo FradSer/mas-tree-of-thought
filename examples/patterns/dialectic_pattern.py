@@ -12,7 +12,7 @@ a class", so the port needed no structural changes, only swapping
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from dialectica import workflow as wf
 
@@ -109,8 +109,8 @@ class DialecticEngine:
         criteria: str = DEFAULT_CRITERIA,
         max_rounds: int = 5,
         perspectives: int = 1,
-        model_config: Optional[str] = None,
-        discriminator_model: Optional[str] = None,
+        model_config: str | None = None,
+        discriminator_model: str | None = None,
     ):
         self.problem = problem
         self.criteria = criteria
@@ -306,11 +306,11 @@ class DialecticEngine:
 
 def create_dialectic_engine(
     problem: str,
-    criteria: Optional[str] = None,
+    criteria: str | None = None,
     max_rounds: int = 5,
     perspectives: int = 1,
-    model_config: Optional[str] = None,
-    discriminator_model: Optional[str] = None,
+    model_config: str | None = None,
+    discriminator_model: str | None = None,
 ) -> DialecticEngine:
     """Wire a DialecticEngine (the demoted dialectic reference pattern).
 

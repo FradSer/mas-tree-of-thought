@@ -22,7 +22,7 @@ import logging
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from dialectica import workflow as wf
 
@@ -281,7 +281,7 @@ class EnsembleSearchEngine:
 def create_ensemble_engine(
     problem: str,
     scorer: Scorer,
-    models: Optional[list[str]] = None,
+    models: list[str] | None = None,
     max_calls: int = 8,
     solved_score: float = 1.0,
     solution_format: str = "",
