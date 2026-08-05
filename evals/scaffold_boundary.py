@@ -138,7 +138,9 @@ async def matched_arm(problem: str, strong_solver: LlmAgent) -> str:
 
 async def naive_arm(problem: str, solver) -> str:
     return (
-        await agent_runtime.run_agent(solver, BASELINE_INSTRUCTION.format(problem=problem))
+        await agent_runtime.run_agent(
+            solver, BASELINE_INSTRUCTION.format(problem=problem)
+        )
     ).strip()
 
 
@@ -251,11 +253,13 @@ def render(report: dict) -> str:
     for label, title in (
         ("dial_matched", "dialectic vs MATCHED strong single (PRIMARY)"),
         ("dial_naive", "dialectic vs NAIVE single (known trap, reference)"),
-        ("refl_matched", "hetero reflection vs MATCHED single (independence, reference)"),
+        (
+            "refl_matched",
+            "hetero reflection vs MATCHED single (independence, reference)",
+        ),
     ):
         lines.append(
-            f"## {title}\n"
-            f"NET (mean score diff) = {report['nets'][label]:+.3f}"
+            f"## {title}\nNET (mean score diff) = {report['nets'][label]:+.3f}"
         )
     return "\n".join(lines) + "\n"
 
