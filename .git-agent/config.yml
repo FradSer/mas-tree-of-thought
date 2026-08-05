@@ -1,5 +1,9 @@
 scopes:
     - name: dialectica
-      description: Core engine, agent protocols, and processing stages in dialectica/; does not cover test suites or project-wide configuration
+      description: core engine, agents, and processing logic in dialectica/; does not cover evaluation scripts or pattern examples
+    - name: evals
+      description: benchmark suites and ablation harnesses in evals/; does not cover core engine source code
     - name: tests
-      description: Automated verification and integration test suites in tests/; does not cover application source code or build configuration
+      description: automated BDD scenarios and unit test suites in tests/; does not cover application source code
+    - name: examples
+      description: pattern implementations and usage demonstrations in examples/; does not cover core logic or evaluation harnesses
