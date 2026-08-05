@@ -1,8 +1,7 @@
 """Reference pattern: AB-MCTS-lite adaptive search over a heterogeneous roster.
 
 DEMOTED FROM THE SHIPPED API (was ``dialectica.create_ensemble_engine``) per
-the project's own honesty gate (``evals/ensemble_ablation.py``,
-``evals/ensemble_meta_ablation.py``): a blind-pick roster (the float scorer
+the project's own honesty gate (README finding #5): a blind-pick roster (the float scorer
 replaced by a constant) matched the real scorer's performance on open-ended
 tasks (3-1 vs the scorer arm's 3-1-2), and both saturated 6/6 on verifiable
 code — the measured robustness gain is attributable to roster

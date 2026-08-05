@@ -3,7 +3,7 @@
 DEMOTED FROM THE SHIPPED API (was ``dialectica.create_engine``/
 ``create_coordinator``). Measured "dominated" at matched compute — never
 wins a single matchup against a single call, best-of-N, or flat self-refine
-(``evals/quality_ablation.py``); on Game-of-24 (ToT's own canonical
+(README findings #2 / #3); on Game-of-24 (ToT's own canonical
 benchmark) a faithful ToT scored 14/15 and LOST to a single call's 15/15 at
 ~34x the cost. Kept as a runnable reference for the beam-search+GAN pattern,
 not as a shipped engine.

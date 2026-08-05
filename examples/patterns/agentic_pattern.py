@@ -7,7 +7,7 @@ first-class ``workflow.py`` primitive; there is nothing left that requires a
 dedicated engine class. This script is kept as a runnable reference for the
 pattern, not as shipped library code (see README "Patterns").
 
-Measured result (``evals/agentic_eval.py``, small model, hidden-oracle
+Measured result (README finding #1, small model, hidden-oracle
 benchmark): 8/8 vs a single call's 0/8. The win requires genuinely injecting
 tools — a workflow stage with no tools is just a pure-LLM call and ties/loses
 like every other scaffold in this repo.
