@@ -38,6 +38,15 @@ markers = [
     "e2e: end-to-end test that calls the real Gemini API (requires GOOGLE_API_KEY)",
     "e2e_access: end-to-end access-list test against a cliproxy/OpenAI-compatible endpoint (requires OPENAI_API_BASE + OPENAI_API_KEY + DEFAULT_MODEL_CONFIG=openai:...)",
 ]
+filterwarnings = [
+    # ADK 2.6.x: BaseAgentConfig deprecation — frozen by ADK's pin on
+    # opentelemetry-api<1.43; cannot upgrade until ADK does.
+    'ignore:BaseAgentConfig is deprecated:DeprecationWarning',
+    # OpenTelemetry 1.42.x: SelectableGroups deprecation — same constraint.
+    'ignore:SelectableGroups dict interface is deprecated:DeprecationWarning',
+    # ADK 2.6.x: experimental feature UserWarning (benign).
+    'ignore::UserWarning',
+]
 
 [tool.ruff]
 target-version = "py311"
