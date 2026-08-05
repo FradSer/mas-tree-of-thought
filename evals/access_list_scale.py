@@ -72,7 +72,7 @@ async def _one_run(
     try:
         with count_agent_calls() as counter:
             result = await engine.run()
-    except Exception as e:  # noqa: BLE001 — harness must record, not crash
+    except Exception as e:  # harness must record, not crash
         latency = time.perf_counter() - start
         runtime.append({"latency": latency, "calls": 0, "ok": False, "err": str(e)})
         return ("error", 0, latency, str(e))
@@ -88,9 +88,7 @@ async def _one_run(
 def _pctile(sorted_vals: list[float], pct: float) -> float:
     if not sorted_vals:
         return 0.0
-    k = max(
-        0, min(len(sorted_vals) - 1, int(round((pct / 100.0) * (len(sorted_vals) - 1))))
-    )
+    k = max(0, min(len(sorted_vals) - 1, round((pct / 100.0) * (len(sorted_vals) - 1))))
     return sorted_vals[k]
 
 

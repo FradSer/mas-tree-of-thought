@@ -234,8 +234,8 @@ async def run(limit: int | None) -> dict:
                 "refl_matched": round(s_refl - s_matched, 2),
             },
         }
-        for k in nets:
-            nets[k].append(row["nets"][k])
+        for k, v in nets.items():
+            v.append(row["nets"][k])
         rows.append(row)
         print(
             f"[{p.id}] dial={s_dial:.2f} matched={s_matched:.2f} "

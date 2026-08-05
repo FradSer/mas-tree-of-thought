@@ -147,8 +147,10 @@ def render_markdown(report: EvalReport) -> str:
     lines = [
         "# Dialectica eval: engine vs single-call baseline",
         "",
-        f"**Engine wins: {report.engine_wins} · "
-        f"Baseline wins: {report.baseline_wins} · Ties: {report.ties}**",
+        (
+            f"**Engine wins: {report.engine_wins} · "
+            f"Baseline wins: {report.baseline_wins} · Ties: {report.ties}**"
+        ),
         "",
         "| Problem | Winner | Engine calls | Baseline calls | Engine s | Baseline s |",
         "|---------|--------|--------------|----------------|----------|------------|",

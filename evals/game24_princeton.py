@@ -293,8 +293,10 @@ async def run(limit: int, beam: int, cot_sc_k: int, n_value: int) -> dict:
 
 def render(result: dict) -> str:
     lines = [
-        "# Princeton-recipe ToT vs single call vs CoT-SC | Game-of-24 "
-        "(original prompts, LM does arithmetic, ground-truth verified)\n"
+        (
+            "# Princeton-recipe ToT vs single call vs CoT-SC | Game-of-24 "
+            "(original prompts, LM does arithmetic, ground-truth verified)\n"
+        )
     ]
     for r in result["rows"]:
         nums = " ".join(str(x) for x in r["puzzle"])

@@ -33,7 +33,7 @@ ORACLES = {
     "digitsum3": lambda x: sum(int(d) for d in str(abs(x))) * 3,
     "collatz-step": lambda x: x // 2 if x % 2 == 0 else 3 * x + 1,
     "bitmix": lambda x: (x << 2) ^ 5,
-    "popcount": lambda x: bin(abs(x)).count("1"),
+    "popcount": lambda x: abs(x).bit_count(),
     "reverse": lambda x: (-1 if x < 0 else 1) * int(str(abs(x))[::-1]),
     "relu": lambda x: max(0, x * 2 - 7),
 }

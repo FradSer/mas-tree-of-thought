@@ -99,7 +99,8 @@ def main():
     )
     print(f"# NET workflow wins = {r['workflow'] - r['single']}")
     if a.json:
-        json.dump(r, open(a.json, "w"), indent=2)
+        with open(a.json, "w") as f:
+            json.dump(r, f, indent=2)
 
 
 if __name__ == "__main__":

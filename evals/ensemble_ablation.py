@@ -341,12 +341,18 @@ def render_markdown(report: EnsembleAblationReport) -> str:
         "",
         "| arm | pass | LLM calls | description |",
         "|---|---|---|---|",
-        f"| (a) ensemble + signal | {report.pass_a}/{n} | {report.calls_a} "
-        f"| heterogeneous roster + ground-truth scorer |",
-        f"| (b) best-single best-of-{budget} | {report.pass_b}/{n} | {report.calls_b} "
-        f"| {budget} independent samples from {report.roster[0]} |",
-        f"| (c) ensemble blind-pick | {report.pass_c}/{n} | {report.calls_c} "
-        f"| heterogeneous roster, constant scorer (first-pick) |",
+        (
+            f"| (a) ensemble + signal | {report.pass_a}/{n} | {report.calls_a} "
+            "| heterogeneous roster + ground-truth scorer |"
+        ),
+        (
+            f"| (b) best-single best-of-{budget} | {report.pass_b}/{n} | {report.calls_b} "
+            f"| {budget} independent samples from {report.roster[0]} |"
+        ),
+        (
+            f"| (c) ensemble blind-pick | {report.pass_c}/{n} | {report.calls_c} "
+            "| heterogeneous roster, constant scorer (first-pick) |"
+        ),
         "",
     ]
 
@@ -385,10 +391,14 @@ def render_markdown(report: EnsembleAblationReport) -> str:
         "",
         "| arm | pass | LLM calls | model-switch wins |",
         "|---|---|---|---|",
-        f"| multi-model-repair@{budget} | {report.repair_multi_pass}/{n} "
-        f"| {report.repair_multi_calls_total} | {report.model_switched_wins} |",
-        f"| single-model-repair@{budget} | {report.repair_single_pass}/{n} "
-        f"| {report.repair_single_calls_total} | — |",
+        (
+            f"| multi-model-repair@{budget} | {report.repair_multi_pass}/{n} "
+            f"| {report.repair_multi_calls_total} | {report.model_switched_wins} |"
+        ),
+        (
+            f"| single-model-repair@{budget} | {report.repair_single_pass}/{n} "
+            f"| {report.repair_single_calls_total} | — |"
+        ),
         "",
     ]
 
@@ -419,8 +429,10 @@ def render_markdown(report: EnsembleAblationReport) -> str:
         "",
         "## Per-problem detail",
         "",
-        f"| problem | (a) signal | (b) best-of-{budget} | (c) blind "
-        f"| repair-multi | repair-single | switched? |",
+        (
+            f"| problem | (a) signal | (b) best-of-{budget} | (c) blind "
+            "| repair-multi | repair-single | switched? |"
+        ),
         "|---|---|---|---|---|---|---|",
     ]
     for r in report.results:

@@ -150,11 +150,15 @@ def render_markdown(report: RepairAblationReport) -> str:
         f"| best-of-{k} (resampling) | {report.best_of_k}/{n} | {report.best_of_k_calls} |",
         f"| repair@{k} (engine) | {report.repair}/{n} | {report.repair_calls} |",
         "",
-        f"- feedback-only wins (repair fixed via the loop what resampling did not): "
-        f"**{report.feedback_only_wins}**",
-        f"- repair vs best-of-{k} at matched cost: "
-        f"**{report.repair}/{n} vs {report.best_of_k}/{n}** pass, "
-        f"**{report.repair_calls} vs {report.best_of_k_calls}** calls",
+        (
+            f"- feedback-only wins (repair fixed via the loop what resampling did not): "
+            f"**{report.feedback_only_wins}**"
+        ),
+        (
+            f"- repair vs best-of-{k} at matched cost: "
+            f"**{report.repair}/{n} vs {report.best_of_k}/{n}** pass, "
+            f"**{report.repair_calls} vs {report.best_of_k_calls}** calls"
+        ),
         "",
         "| problem | pass@1 | best-of-K | repair@K | repair attempts |",
         "|---|---|---|---|---|",

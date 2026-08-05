@@ -209,7 +209,7 @@ async def run_rescue_eval(
     suite; other suites (e.g. LiveCodeBench stdin problems) plug in theirs.
     """
     if verifier is None:
-        verifier = lambda problem, code: verify_solution(problem, code)  # noqa: E731
+        verifier = lambda problem, code: verify_solution(problem, code)
     if statement_builder is None:
         statement_builder = build_statement
 
@@ -264,9 +264,11 @@ def render_rescue_markdown(report: RescueReport) -> str:
     lines = [
         "# Dialectica rescue eval: engine on baseline failures (ground truth)",
         "",
-        f"**Baseline solved {len(report.baseline_solved)}/{report.total_problems} "
-        f"(within {report.screen_attempts} attempts) · "
-        f"Engine rescued {report.rescued}/{failures} of the failures**",
+        (
+            f"**Baseline solved {len(report.baseline_solved)}/{report.total_problems} "
+            f"(within {report.screen_attempts} attempts) · "
+            f"Engine rescued {report.rescued}/{failures} of the failures**"
+        ),
         "",
     ]
     if report.attempted:
@@ -295,8 +297,10 @@ def render_code_markdown(report: CodeEvalReport) -> str:
     lines = [
         "# Dialectica code eval: engine vs single-call baseline (ground truth)",
         "",
-        f"**Engine: {report.engine_passed}/{total} passed · "
-        f"Baseline: {report.baseline_passed}/{total} passed**",
+        (
+            f"**Engine: {report.engine_passed}/{total} passed · "
+            f"Baseline: {report.baseline_passed}/{total} passed**"
+        ),
         "",
         "| Problem | Engine | Baseline | Engine calls | Engine s | Baseline s |",
         "|---------|--------|----------|--------------|----------|------------|",
@@ -368,7 +372,7 @@ async def run_ablation(
     lift is search/refinement versus plain resampling at the same spend.
     """
     if verifier is None:
-        verifier = lambda problem, code: verify_solution(problem, code)  # noqa: E731
+        verifier = lambda problem, code: verify_solution(problem, code)
     if statement_builder is None:
         statement_builder = build_statement
 
@@ -412,9 +416,11 @@ def render_ablation_markdown(report: AblationReport) -> str:
     lines = [
         "# Dialectica ablation: engine vs best-of-N at matched cost (ground truth)",
         "",
-        f"**Engine {report.engine_passed}/{n} · "
-        f"best-of-N {report.best_of_n_passed}/{n} · "
-        f"pass@1 {report.pass_at_1_passed}/{n}**",
+        (
+            f"**Engine {report.engine_passed}/{n} · "
+            f"best-of-N {report.best_of_n_passed}/{n} · "
+            f"pass@1 {report.pass_at_1_passed}/{n}**"
+        ),
         "",
         "| Problem | pass@1 | best-of-N | engine | N |",
         "|---------|--------|-----------|--------|---|",

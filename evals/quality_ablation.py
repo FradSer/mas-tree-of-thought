@@ -226,10 +226,14 @@ def _tally(rows, key: str) -> tuple[int, int, int]:
 def render(result: dict) -> str:
     rows = result["rows"]
     lines = [
-        f"# Quality ablation | engine={result['engine']} | "
-        "blind position-swapped judge, matched compute\n",
-        f"{'problem':>16}  {'eng':>4} {'bon':>4} {'sr':>4}  "
-        "vs_single  vs_best_of_n  vs_self_refine",
+        (
+            f"# Quality ablation | engine={result['engine']} | "
+            "blind position-swapped judge, matched compute\n"
+        ),
+        (
+            f"{'problem':>16}  {'eng':>4} {'bon':>4} {'sr':>4}  "
+            "vs_single  vs_best_of_n  vs_self_refine"
+        ),
     ]
     for r in rows:
         lines.append(

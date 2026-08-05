@@ -20,8 +20,8 @@ from .judge import BlindJudge, JudgeVerdict, PairwiseResult, create_judge_agent
 from .problems import DEFAULT_PROBLEMS, EvalProblem
 
 __all__ = [
-    "BlindJudge",
     "DEFAULT_PROBLEMS",
+    "BlindJudge",
     "EvalProblem",
     "EvalReport",
     "JudgeVerdict",
