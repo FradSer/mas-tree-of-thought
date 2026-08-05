@@ -25,8 +25,3 @@ def get_workflow(name: str) -> Callable[[], Awaitable[Any]]:
 
 def list_workflows() -> list[str]:
     return sorted(_REGISTRY)
-
-
-def clear_workflows() -> None:
-    """Reset the registry (tests only)."""
-    _REGISTRY.clear()
