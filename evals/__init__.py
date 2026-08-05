@@ -1,36 +1,24 @@
-"""Eval harness for Dialectica — engine vs single-call baseline, judged blind.
+"""Eval harness for Dialectica — shared primitives for the live ablation scripts.
 
-A development tool, not part of the published package: it answers "is the
-engine worth its cost" with data. Each benchmark problem is solved by the
-engine and by a single strong-model call, then a blind LLM judge compares the
-two answers (twice, with positions swapped, to neutralize position bias).
+A development tool, not part of the published package. The current evals are
+the ablation scripts documented in the README (``reflection_ablation``,
+``workflow_ablation``, ``quality_workflow_ablation``); this package only holds
+the shared machinery they build on (judge, baseline, problem sets).
 
-Run it with: ``uv run python -m evals``.
+The historical ``python -m evals`` CLI (ToT+GAN engine vs single-call baseline)
+was removed; the three ablations above are the current methodology.
 """
 
-from .baseline import SingleCallBaseline, create_baseline_agent
-from .harness import (
-    EvalReport,
-    ProblemResult,
-    count_agent_calls,
-    render_markdown,
-    run_eval,
-)
-from .judge import BlindJudge, JudgeVerdict, PairwiseResult, create_judge_agent
+from .baseline import BASELINE_INSTRUCTION
+from .harness import count_agent_calls
+from .judge import BlindJudge, create_judge_agent
 from .problems import DEFAULT_PROBLEMS, EvalProblem
 
 __all__ = [
+    "BASELINE_INSTRUCTION",
     "DEFAULT_PROBLEMS",
     "BlindJudge",
     "EvalProblem",
-    "EvalReport",
-    "JudgeVerdict",
-    "PairwiseResult",
-    "ProblemResult",
-    "SingleCallBaseline",
     "count_agent_calls",
-    "create_baseline_agent",
     "create_judge_agent",
-    "render_markdown",
-    "run_eval",
 ]
