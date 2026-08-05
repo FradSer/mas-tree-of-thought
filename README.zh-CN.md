@@ -120,14 +120,16 @@ asyncio.run(main())
   记录每次尝试由哪个模型产出。
 - **返回** `{final_answer, passed, attempts, history}`。
 
-用 `uv run python -m evals.repair_ablation` 对比 pass@1 与 matched-cost best-of-K。
+实测判决（结论 #2）：通过率上打败单次调用、与 matched-cost best-of-K 打平，
+但只需约 1/3 的调用。
 
 ## 模式（不随包发布，仅供参考）
 
 `examples/patterns/`（与 `evals/` 一样是开发工具，不随 wheel 打包）保留了所有
 被 evals 判定**不值得** ship 成稳定 API 的引擎的可运行参考实现。每个模式都保留
 被降级引擎原本的工厂函数名/签名/返回形态，内部重建在 `Workflow` 内核之上而非
-自建 agent，因此原来测量它们的那些 `evals/*.py` 脚本无需改动就能继续跑。
+自建 agent。（当初测量它们的 `evals/*.py` 脚本已于 2026-08 清理中移除；实测判决
+见上表与下方核心结论。）
 
 | 模式 | 展示什么 | 实测判决 |
 |---|---|---|
@@ -160,37 +162,34 @@ from examples.patterns.tot_gan_pattern import create_engine
 接缝计数。
 
 ```bash
-uv run python -m evals                          # 全部基准题（ToT+GAN 模式，历史默认值）
-uv run python -m evals.repair_ablation          # repair vs best-of-K
-uv run python -m evals.agentic_eval             # agentic 模式 vs 单次（隐藏 oracle）
-uv run python -m evals.quality_ablation         # ToT+GAN / dialectic 模式 vs 单次/best-of-N/self-refine
-uv run python -m evals.ensemble_ablation        # ensemble 模式三臂 honesty gate（代码）
-uv run python -m evals.ensemble_meta_ablation   # ensemble 模式 honesty gate（open-ended，LLM 评判）
 uv run python -m evals.reflection_ablation      # reflection 模式：异构 vs 同构 vs 单次（open-ended）
 uv run python -m evals.quality_workflow_ablation  # 多模型模式 vs 单次（meta+default，10 题）
-uv run python -m evals.workflow_ablation      # 同构 reflection vs 单次（open-ended）
-uv run python -m evals.access_list_scale      # access-list reflection 的高并发吞吐/延迟（任意 OpenAI 兼容端点）
+uv run python -m evals.workflow_ablation        # 同构 reflection vs 单次（open-ended）
 ```
+
+历史评测脚本（ToT+GAN 的 `python -m evals` CLI，以及 `repair_ablation` /
+`agentic_eval` / `quality_ablation` / `ensemble_ablation` /
+`ensemble_meta_ablation` / `access_list_scale` / `scaffold_boundary` 套件）已于
+2026-08 清理中移除；上面三个 ablation 是当前方法论，它们支撑的结论作为记录
+保留在下方。
 
 ### 核心结论（实测，无预设结论）
 
 1. **引擎真正赢的地方——能力，不是质量。** 在需要*行动*的任务上（agentic 隐藏
    oracle 基准），小模型用 `agent(tools=[...])` 得 **8/8**，单次调用 **0/8**：它探测
    隐藏函数、推断规则、实现之——单次调用无从知晓任意规则。这是真正的价值类别。
-   复现：`uv run python -m evals.agentic_eval`。
 
 2. **scaffold 不赢的地方——自包含结果质量。** 与 *matched-cost* 基线相比，**无
    纯 LLM scaffold 打败单次调用**：dialectic 模式 vs prompt-matched 强基线在各档模型上
    **0-3-2**（早先 4-1-0 的"赢"是 prompt+长度，不是结构）。**repair** 引擎打败
    *单次*调用，但在通过率上与 *matched-cost best-of-K* **打平**——其真正优势是
-   **成本**（best-of-N 可靠性，约 1/3 调用）。复现：`uv run python -m evals.repair_ablation`。
+   **成本**（best-of-N 可靠性，约 1/3 调用）。
 
 3. **树结构被*压制*，而不仅无用。** 在 **24 点游戏**——ToT *自己*的标志基准
    上——忠实 ToT 得 **14/15，以约 34× 成本输给单次的 15/15**：现代模型一次解出
    2023 论文 GPT-4 失败 96% 的任务。matched-cost 盲评判下 ToT+GAN 模式
    **0-4-1 / 0-2-3 / 0-1-4**（vs 单次 / best-of-N / self-refine）——*从未赢过一
-   场*。质量序：**self-refine ≥ best-of-N ≥ 单次 ≥ 树 scaffold**。复现：
-   `uv run python -m evals.game24` 与 `uv run python -m evals.quality_ablation`。
+   场*。质量序：**self-refine ≥ best-of-N ≥ 单次 ≥ 树 scaffold**。
 
 4. **价值窗口在可达模型范围上已关闭。** ToT 只在基模型单独失败但搜索能恢复的
    "失败但可修"区间有用。对最难的 24 点题在四个模型档位（最弱的可达云模型）上
@@ -209,12 +208,9 @@ uv run python -m evals.access_list_scale      # access-list reflection 的高并
      **3-1** 打败单次：增益**归因于 roster 异构性，不是 scorer 排序信号**。按 H1
      信号归因条款：**CUT**。
    - **要点：** *无 scorer* 的多模型 best-of-N（采样 N 个异构模型、保留一个）即可
-     捕获 ensemble 在 open-ended 上展现的健壮性增益；float scorer 相对 blind-pick
-     无可测提升。repair 子判据亦 **CUT**（multi-model-repair@6 vs single@6：6/6 vs
-     6/6，**0 次模型切换救援**）。复现：`uv run python -m evals.ensemble_ablation`
-     与 `uv run python -m evals.ensemble_meta_ablation`（需经 `OPENAI_API_BASE`/
-     `OPENAI_API_KEY` 的多 provider roster，如暴露 qwen+glm 的 cliproxy；
-     `DIALECTICA_DISABLE_THINKING=true` 以降 qwen 族延迟）。
+      捕获 ensemble 在 open-ended 上展现的健壮性增益；float scorer 相对 blind-pick
+      无可测提升。repair 子判据亦 **CUT**（multi-model-repair@6 vs single@6：6/6 vs
+      6/6，**0 次模型切换救援**）。
 
 6. **异构 reflection——诚实的 meta-task 杠杆（2026-07-08）。** `reflection_pattern.py`
    实现 gather → frame → critique → synthesize 结构化 pipeline，各视角分配不同
@@ -242,9 +238,9 @@ uv run python -m evals.access_list_scale      # access-list reflection 的高并
      默认用 `create_reflection_engine`；`quality_workflow_pattern` 仅作模式对照。
      复现：`uv run python -m evals.quality_workflow_ablation`。
 
-8. **访问列表——一种上下文可见性杠杆，移植自 Sakana Fugu（2026-07-12）。** 对 Sakana Fugu/Fugu-Ultra 编排器（TRINITY + The Conductor，ICLR 2026）的研究从另一侧印证了上述定律：Fugu 相对每个单 worker 的胜绩来自**模型独立性 + 学习型路由器**，而非 worker 缺少的工具，其机制是带按步骤访问列表的学习型通信拓扑。唯一能移植到无训练内核的机制是**访问列表**——`agent(sees=[...])` 现作为内核原语发布：默认完全隔离，可选注入指定前置步骤的输出。它经 `use_access_lists=True` 接入 reflection 配方（每个 critique 只看自己的 gather 角度；synthesize 只看 tension + critiques，而非全部 transcript），并已对照真实模型（经 OpenAI 兼容端点的 `glm-5.2`）验证。上述实测 reflection 数字用的是内联 prompt，故访问列表模式在 ablation 证明其在相同矩阵上 lift 或 tie 之前保持可选。复现实时校验：`uv run pytest -m e2e_access`；扩规模：`uv run python -m evals.access_list_scale`。
+8. **访问列表——一种上下文可见性杠杆，移植自 Sakana Fugu（2026-07-12）。** 对 Sakana Fugu/Fugu-Ultra 编排器（TRINITY + The Conductor，ICLR 2026）的研究从另一侧印证了上述定律：Fugu 相对每个单 worker 的胜绩来自**模型独立性 + 学习型路由器**，而非 worker 缺少的工具，其机制是带按步骤访问列表的学习型通信拓扑。唯一能移植到无训练内核的机制是**访问列表**——`agent(sees=[...])` 现作为内核原语发布：默认完全隔离，可选注入指定前置步骤的输出。它经 `use_access_lists=True` 接入 reflection 配方（每个 critique 只看自己的 gather 角度；synthesize 只看 tension + critiques，而非全部 transcript），并已对照真实模型（经 OpenAI 兼容端点的 `glm-5.2`）验证。上述实测 reflection 数字用的是内联 prompt，故访问列表模式在 ablation 证明其在相同矩阵上 lift 或 tie 之前保持可选。复现实时校验：`uv run pytest -m e2e_access`。
 
-9. **调好的辩证在开放式 meta-task 上打败 prompt-matched 单次调用（2026-08-05）。** 0-3-2（结论 #2）并不是全部：那个辩证没调到位。两处纯 LLM、同模型的改动——**调硬 `SYNTHESIS_PROMPT`**（做一个绑定决策、给出精确可测触发、说明每边赢的条件、保留具体数字——与 reflection 对 synthesis 的同一标准）和**加深螺旋**（`max_rounds` 3 → 5）——把辩证对 prompt-matched 强单次调用的 NET 从 **−0.500 翻到 +0.600**，经**两次独立运行**确认（+0.100、+0.600）。方法论很关键：这次用的是**连续 0-10 打分**（盲评判对每个答案按 `DEFAULT_CRITERIA` 打分，NET = 平均分差），而非离散胜/负/平——后者的 ±4 逐次摆动让早期测量不可读。被否的方向：再调硬 THESIS prompt（−0.333）和每轮两个对手（`perspectives=2`，−0.567）都回退并弃用。注意：在 3 个 meta 问题上、单一 judge（gpt-5.5）、连续打分设计下测得；同样的调法在完整 5-meta 题池上尚未实测。复现：`uv run python -m evals.scaffold_boundary --limit 3`。
+9. **调好的辩证在开放式 meta-task 上打败 prompt-matched 单次调用（2026-08-05）。** 0-3-2（结论 #2）并不是全部：那个辩证没调到位。两处纯 LLM、同模型的改动——**调硬 `SYNTHESIS_PROMPT`**（做一个绑定决策、给出精确可测触发、说明每边赢的条件、保留具体数字——与 reflection 对 synthesis 的同一标准）和**加深螺旋**（`max_rounds` 3 → 5）——把辩证对 prompt-matched 强单次调用的 NET 从 **−0.500 翻到 +0.600**，经**两次独立运行**确认（+0.100、+0.600）。方法论很关键：这次用的是**连续 0-10 打分**（盲评判对每个答案按 `DEFAULT_CRITERIA` 打分，NET = 平均分差），而非离散胜/负/平——后者的 ±4 逐次摆动让早期测量不可读。被否的方向：再调硬 THESIS prompt（−0.333）和每轮两个对手（`perspectives=2`，−0.567）都回退并弃用。注意：在 3 个 meta 问题上、单一 judge（gpt-5.5）、连续打分设计下测得；同样的调法在完整 5-meta 题池上尚未实测。
 
 ### 这些结论共同指向的定律
 
@@ -260,8 +256,8 @@ ground-truth oracle 支撑。这条定律正是为什么 ship 出去的 API 现�
 ### 早期 advice 矩阵（2026-06-10/11）——已被取代
 
 首轮矩阵将 ToT+GAN 模式与*较弱*的单次基线（无 prompt 匹配对照）和"Innovation"
-判别准则（偏向过度复杂的答案）比较。已被上方 #2–#7 取代。保留在 `evals/results/`
-以供复现：V1（Innovation 准则）技术上 7-1-1 赢、组织上 0-4-2 输；V2（Feasibility
+判别准则（偏向过度复杂的答案）比较。已被上方 #2–#7 取代。记录于此：V1（Innovation
+准则）技术上 7-1-1 赢、组织上 0-4-2 输；V2（Feasibility
 准则）合计 20-8-2 vs V1 的 7-5-3——证明判别准则引导答案*内容*而非仅选择，但都未
 打败 prompt-matched 强基线。
 
@@ -415,9 +411,9 @@ examples/patterns/     # 被降级引擎的参考实现（不随包发布）
   quality_workflow_pattern.py # 模式 ablation 切换器
   tot_gan_pattern.py
 evals/                # 仅开发的评测工具（不随 wheel 发布）
-  access_list_scale.py       # sees= reflection 的高并发吞吐/延迟 harness
+  baseline.py, harness.py, judge.py, problems.py, meta_problems.py  # 共享原语
+  reflection_ablation.py, workflow_ablation.py, quality_workflow_ablation.py  # 当前 ablation
 tests/                # BDD 特性 + 步骤定义 + helpers
-docs/plans/            # 设计与计划文件夹（brainstorming/writing-plans）
 ```
 
 ## 故障排除

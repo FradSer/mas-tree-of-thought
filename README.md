@@ -147,7 +147,9 @@ call in a bounded retry loop, no bespoke agent construction of its own.
 - **Multi-model** — pass `models=[...]` to rotate across a roster on failure; the per-attempt `history[i]["model"]` records which model produced each attempt.
 - **Returns** `{final_answer, passed, attempts, history}`.
 
-Measure it against pass@1 and matched-cost best-of-K with `uv run python -m evals.repair_ablation`.
+Measure it against pass@1 and matched-cost best-of-K — the measured verdict
+(finding #2): beats a single call on pass-rate, ties matched-cost best-of-K,
+at ~1/3 the calls.
 
 ## Patterns (not shipped, for reference)
 
@@ -155,8 +157,9 @@ Measure it against pass@1 and matched-cost best-of-K with `uv run python -m eval
 holds runnable reference implementations of everything the evals did **not**
 justify shipping as stable API. Each keeps the demoted engine's exact
 factory name/signature/return-shape, rebuilt on the `Workflow` kernel instead
-of bespoke agent construction, so the same `evals/*.py` scripts that measured
-them keep working unchanged.
+of bespoke agent construction. (The `evals/*.py` scripts that originally
+measured them were removed in the 2026-08 cleanup; their verdicts are recorded
+in the table and the findings below.)
 
 | Pattern | What it shows | Measured verdict |
 |---|---|---|
@@ -192,32 +195,31 @@ positions swapped (disagreement = tie); LLM calls are counted through the same
 `run_agent` seam the tests mock.
 
 ```bash
-uv run python -m evals                          # all benchmark problems (ToT+GAN pattern, historical default)
-uv run python -m evals.repair_ablation          # repair vs best-of-K
-uv run python -m evals.agentic_eval             # agentic pattern vs single (hidden oracle)
-uv run python -m evals.quality_ablation         # ToT+GAN / dialectic patterns vs single/best-of-N/self-refine
-uv run python -m evals.ensemble_ablation        # ensemble pattern 3-arm honesty gate (code)
-uv run python -m evals.ensemble_meta_ablation   # ensemble pattern honesty gate (open-ended, LLM judge)
 uv run python -m evals.reflection_ablation      # reflection pattern: hetero vs homo vs single (open-ended)
 uv run python -m evals.quality_workflow_ablation  # multi-model modes vs single (meta+default, 10 problems)
 uv run python -m evals.workflow_ablation        # homogeneous reflection vs single (open-ended)
-uv run python -m evals.access_list_scale        # high-concurrency throughput/latency of access-list reflection (any OpenAI-compatible endpoint)
 ```
+
+The historical eval scripts (the ToT+GAN `python -m evals` CLI, and the
+`repair_ablation` / `agentic_eval` / `quality_ablation` / `ensemble_ablation` /
+`ensemble_meta_ablation` / `access_list_scale` / `scaffold_boundary` suites)
+were removed in the 2026-08 cleanup; the three ablations above are the current
+methodology, and the findings they back are retained below as a record.
 
 ### Headline findings (measured, no preset conclusion)
 
-1. **Where an engine genuinely wins — capability, not quality.** On tasks that require *acting* (the agentic hidden-oracle benchmark), a small model with `agent(tools=[...])` scored **8/8** vs a single call's **0/8**: it probes the hidden function, infers the rule, and implements it — a single call can't know an arbitrary rule without probing. This is the genuine value class. Reproduce: `uv run python -m evals.agentic_eval`.
+1. **Where an engine genuinely wins — capability, not quality.** On tasks that require *acting* (the agentic hidden-oracle benchmark), a small model with `agent(tools=[...])` scored **8/8** vs a single call's **0/8**: it probes the hidden function, infers the rule, and implements it — a single call can't know an arbitrary rule without probing. This is the genuine value class.
 
-2. **Where scaffolds do NOT win — self-contained result quality.** Judged against a *matched-cost* baseline, **no pure-LLM scaffold beats a single call on self-contained tasks**: the dialectic pattern went **0-3-2** vs a prompt-matched strong baseline at every model size (the earlier 4-1-0 "win" was prompt + length, not structure). The **repair** engine beats a *single* call but exactly **ties matched-cost best-of-K** on pass-rate — its real edge is **cost** (best-of-N reliability at ~1/3 the calls). Reproduce: `uv run python -m evals.repair_ablation`. On *open-ended meta-tasks*, the picture differs — see finding #9 (the dialectic, correctly tuned, beats a prompt-matched single call).
+2. **Where scaffolds do NOT win — self-contained result quality.** Judged against a *matched-cost* baseline, **no pure-LLM scaffold beats a single call on self-contained tasks**: the dialectic pattern went **0-3-2** vs a prompt-matched strong baseline at every model size (the earlier 4-1-0 "win" was prompt + length, not structure). The **repair** engine beats a *single* call but exactly **ties matched-cost best-of-K** on pass-rate — its real edge is **cost** (best-of-N reliability at ~1/3 the calls). On *open-ended meta-tasks*, the picture differs — see finding #9 (the dialectic, correctly tuned, beats a prompt-matched single call).
 
-3. **The tree structure is *dominated*, not just unhelpful.** On **Game-of-24** — ToT's *own* canonical benchmark — a faithful ToT scored **14/15 and lost to a single call's 15/15 at ~34× the cost**: modern models one-shot the task the 2023 paper's GPT-4 failed 96% of the time. At matched compute under a blind judge, the ToT+GAN pattern went **0-4-1 / 0-2-3 / 0-1-4** (vs single / best-of-N / self-refine) — it *never won a matchup*. The quality order is **self-refine ≥ best-of-N ≥ single ≥ tree-scaffold**. Reproduce: `uv run python -m evals.game24` and `uv run python -m evals.quality_ablation`.
+3. **The tree structure is *dominated*, not just unhelpful.** On **Game-of-24** — ToT's *own* canonical benchmark — a faithful ToT scored **14/15 and lost to a single call's 15/15 at ~34× the cost**: modern models one-shot the task the 2023 paper's GPT-4 failed 96% of the time. At matched compute under a blind judge, the ToT+GAN pattern went **0-4-1 / 0-2-3 / 0-1-4** (vs single / best-of-N / self-refine) — it *never won a matchup*. The quality order is **self-refine ≥ best-of-N ≥ single ≥ tree-scaffold**.
 
 4. **The value window is closed across the accessible model range.** ToT only helps where the base model fails alone but search can recover — a "fails-but-fixable" band. Probing the *hardest* Game-of-24 puzzles against **four model tiers** (the weakest cloud models available) a single call scored **5/5 on every model, every puzzle**. There is no accessible weak model that fails these tasks, so there is no gap for search to recover — the boundary has moved past this task.
 
 5. **Heterogeneous ensemble — the scorer's signal is not what does the work (2026-06-26).** The ensemble was designed as a fourth honest win lever — *independence* ranked by a mandatory ground-truth-grade signal. A two-axis honesty gate falsified the signal half of the thesis while surfacing a real, narrower result:
    - **Code (ground-truth verifier, 6 problems, budget 6):** ensemble+signal **6/6**, best-single best-of-6 **6/6**, blind-pick **6/6** — **CUT**: both models one-shot every problem, so heterogeneity and the signal both have empty headroom. Saturation, same shape as finding #4.
    - **Open-ended meta (blind LLM-judge, 5 problems, budget 6, position-swap):** ensemble+signal beat a prompt-matched single call **3-1-2** — *the pattern does improve answer robustness on open-ended tasks* (the code axis couldn't measure this). But the **blind-pick arm** (signal replaced by a constant) also beat single **3-1**: the gain is **attributable to roster heterogeneity, not the scorer's ranking signal**. Per H1's signal-attribution clause: **CUT**.
-   - **Takeaway:** a *no-scorer* multi-model best-of-N (sample N heterogeneous models, keep one) captures the robustness gain the ensemble shows on open-ended tasks; the float scorer adds no measurable lift over blind-pick. The repair sub-criterion was also **CUT** (multi-model-repair@6 vs single@6: 6/6 vs 6/6, **0 model-switch rescues**). Reproduce: `uv run python -m evals.ensemble_ablation` and `uv run python -m evals.ensemble_meta_ablation` (need a live multi-provider roster via `OPENAI_API_BASE`/`OPENAI_API_KEY`, e.g. a cliproxy exposing qwen + glm; `DIALECTICA_DISABLE_THINKING=true` for qwen-family latency).
+   - **Takeaway:** a *no-scorer* multi-model best-of-N (sample N heterogeneous models, keep one) captures the robustness gain the ensemble shows on open-ended tasks; the float scorer adds no measurable lift over blind-pick. The repair sub-criterion was also **CUT** (multi-model-repair@6 vs single@6: 6/6 vs 6/6, **0 model-switch rescues**).
 
 6. **Heterogeneous reflection — the honest meta-task lever (2026-07-08).** `reflection_pattern.py` implements the structured gather → frame → critique → synthesize pipeline with per-angle model assignment — no AB-MCTS, no LLM scorer. On the full **5-problem meta set** (blind position-swap judge, cliproxy roster `openai:qwen3.6-flash` + `openai:glm-5.2`, `JUDGE_MODEL_CONFIG=openai:glm-5.2`, `DIALECTICA_DISABLE_THINKING=true`):
    - **`evals/reflection_ablation.py` — hetero vs homo vs single:** heterogeneous reflection beat a prompt-matched single call **5-0-0** and beat the same pipeline on one model **5-0-0** — the gain is **attributable to roster heterogeneity**, not merely multi-stage shape.
@@ -229,9 +231,9 @@ uv run python -m evals.access_list_scale        # high-concurrency throughput/la
    - **vs hetero reflection (does the extra stage help?):** adversarial **2-0-8** (NET +2); dialectic **0-1-9** (NET −1).
    - **Takeaway:** hetero `reflection` is the default — it sweeps the expanded pool. Extra adversarial-rival or one-round dialectic stages add no consistent lift over hetero reflection (mostly ties; dialectic loses one head-to-head). Prefer `create_reflection_engine`; keep `quality_workflow_pattern` for mode comparison only. Reproduce: `uv run python -m evals.quality_workflow_ablation`.
 
-8. **Access lists — a context-visibility lever, ported from Sakana Fugu (2026-07-12).** A study of Sakana's Fugu/Fugu-Ultra orchestrators (TRINITY + The Conductor, ICLR 2026) confirmed the law above from the other direction: Fugu's win over each single worker comes from **model independence + a learned router**, not tools the workers lack, and a learned communication topology with per-step access lists. The one mechanism portable to a no-training kernel is the **access list** — `agent(sees=[...])` now ships as a kernel primitive: default full isolation, opt-in to inject only designated prior steps' outputs. It is wired into the reflection recipe via `use_access_lists=True` (each critique sees only its own gather angle; synthesize sees the tension + critiques, not the full transcript), and verified against a live model (`glm-5.2` via an OpenAI-compatible endpoint). The measured reflection numbers above used inlined prompts, so access-list mode stays opt-in until an ablation shows it lifts or ties on the same matrices. Reproduce the live check: `uv run pytest -m e2e_access`; scale it: `uv run python -m evals.access_list_scale`.
+8. **Access lists — a context-visibility lever, ported from Sakana Fugu (2026-07-12).** A study of Sakana's Fugu/Fugu-Ultra orchestrators (TRINITY + The Conductor, ICLR 2026) confirmed the law above from the other direction: Fugu's win over each single worker comes from **model independence + a learned router**, not tools the workers lack, and a learned communication topology with per-step access lists. The one mechanism portable to a no-training kernel is the **access list** — `agent(sees=[...])` now ships as a kernel primitive: default full isolation, opt-in to inject only designated prior steps' outputs. It is wired into the reflection recipe via `use_access_lists=True` (each critique sees only its own gather angle; synthesize sees the tension + critiques, not the full transcript), and verified against a live model (`glm-5.2` via an OpenAI-compatible endpoint). The measured reflection numbers above used inlined prompts, so access-list mode stays opt-in until an ablation shows it lifts or ties on the same matrices. Reproduce the live check: `uv run pytest -m e2e_access`.
 
-9. **The dialectic, correctly tuned, beats a prompt-matched single call — on open-ended meta-tasks (2026-08-05).** The 0-3-2 result (finding #2) is **not the whole story**: that dialectic was under-tuned. Two pure-LLM, same-model changes — a **sharpened `SYNTHESIS_PROMPT`** (make ONE binding decision, give the precise measurable trigger, name the condition where each side wins, carry forward specific numbers — the same bar the reflection pattern holds its synthesis to) and a **deeper spiral** (`max_rounds` 3 → 5) — flip the dialectic from **−0.500 to +0.600 NET** vs a prompt-matched strong single call, confirmed over **two independent runs** (+0.100, +0.600). Methodology matters: this used a **continuous 0-10 score** (blind judge grades each answer against `DEFAULT_CRITERIA`, NET = mean score diff), not the discrete win/lose/tie NET whose ±4 run-to-run swing made the earlier measurement unreadable. Rejected directions: sharpening the THESIS prompt too (−0.333) and two rivals per round (`perspectives=2`, −0.567) both regressed and were reverted. Caveat: measured on the 3 meta problems, single judge (gpt-5.5), continuous-score design; the same tuning on the full 5-meta pool is not yet measured. Reproduce: `uv run python -m evals.scaffold_boundary --limit 3`.
+9. **The dialectic, correctly tuned, beats a prompt-matched single call — on open-ended meta-tasks (2026-08-05).** The 0-3-2 result (finding #2) is **not the whole story**: that dialectic was under-tuned. Two pure-LLM, same-model changes — a **sharpened `SYNTHESIS_PROMPT`** (make ONE binding decision, give the precise measurable trigger, name the condition where each side wins, carry forward specific numbers — the same bar the reflection pattern holds its synthesis to) and a **deeper spiral** (`max_rounds` 3 → 5) — flip the dialectic from **−0.500 to +0.600 NET** vs a prompt-matched strong single call, confirmed over **two independent runs** (+0.100, +0.600). Methodology matters: this used a **continuous 0-10 score** (blind judge grades each answer against `DEFAULT_CRITERIA`, NET = mean score diff), not the discrete win/lose/tie NET whose ±4 run-to-run swing made the earlier measurement unreadable. Rejected directions: sharpening the THESIS prompt too (−0.333) and two rivals per round (`perspectives=2`, −0.567) both regressed and were reverted. Caveat: measured on the 3 meta problems, single judge (gpt-5.5), continuous-score design; the same tuning on the full 5-meta pool is not yet measured.
 
 ### The law these findings all point to
 
@@ -253,9 +255,7 @@ meta-task reference).
 The first-round matrices compared the ToT+GAN pattern against a *weaker*
 single-call baseline (no matched-prompt control) and an "Innovation"
 discriminator criterion that steered toward over-complex answers. They are
-superseded by findings #2–#7 above. Kept in `evals/results/` for reproducibility:
-V1 (Innovation criterion) won technical problems 7-1-1 but lost organizational
-ones 0-4-2; V2 (Feasibility criterion) pooled to 20-8-2 vs V1's 7-5-3 —
+superseded by findings #2–#7 above. Recorded here: V1 (Innovation criterion) won technical problems 7-1-1 but lost organizational ones 0-4-2; V2 (Feasibility criterion) pooled to 20-8-2 vs V1's 7-5-3 —
 evidence that discriminator criteria steer answer *content*, not just selection,
 but neither beats a prompt-matched strong baseline.
 
@@ -412,9 +412,9 @@ examples/patterns/     # reference implementations of demoted engines (not shipp
   quality_workflow_pattern.py # mode ablation switcher
   tot_gan_pattern.py
 evals/                # dev-only eval harness (not shipped in the wheel)
-  access_list_scale.py       # high-concurrency throughput/latency harness for sees= reflection
+  baseline.py, harness.py, judge.py, problems.py, meta_problems.py  # shared primitives
+  reflection_ablation.py, workflow_ablation.py, quality_workflow_ablation.py  # the current ablations
 tests/                # BDD features + step defs + helpers
-docs/plans/            # design + plan folders (brainstorming/writing-plans)
 ```
 
 ## Troubleshooting
