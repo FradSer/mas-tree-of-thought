@@ -47,5 +47,22 @@ line-length = 88
 # pyflakes (F) + pycodestyle (E) are on by default; add isort import sorting.
 extend-select = ["I"]
 
+[tool.ruff.lint.per-file-ignores]
+# Dev tools (evals/, examples/, tests/) are reference code, not shipped API.
+# Ruff 0.16 expanded the default ruleset from 59 to 413 rules; suppress the
+# new violations in these directories to avoid churn in reference code.
+"evals/**/*.py" = [
+    "PLW1510", # subprocess.run without check (intentional in eval harness)
+    "BLE001",  # blind exception (intentional in eval harness)
+    "S112",    # try-except-continue (intentional in eval harness)
+]
+"examples/**/*.py" = [
+    "BLE001",  # blind exception (intentional in reference patterns)
+    "RUF022",  # __all__ not sorted (intentional grouping)
+]
+"tests/**/*.py" = [
+    "BLE001",  # blind exception (intentional in test harness)
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["dialectica"]

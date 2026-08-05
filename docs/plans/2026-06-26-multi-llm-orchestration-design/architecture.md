@@ -99,20 +99,21 @@ seam; matches the "value object only where needed" judgment):
 ```python
 @dataclass
 class ModelArm:
-    config: str          # "openai:qwen3.6", "google:gemini-3.5-flash"
-    agent: LlmAgent      # built once via create_agent(model_config=config)
-    name: str            # stable, distinct, e.g. "Candidate[gemini-3.5-flash]"
-    alpha: float = 1.0   # Beta successes + 1
-    beta: float = 1.0    # Beta failures + 1
+    config: str  # "openai:qwen3.6", "google:gemini-3.5-flash"
+    agent: LlmAgent  # built once via create_agent(model_config=config)
+    name: str  # stable, distinct, e.g. "Candidate[gemini-3.5-flash]"
+    alpha: float = 1.0  # Beta successes + 1
+    beta: float = 1.0  # Beta failures + 1
+
 
 @dataclass
 class Candidate:
     answer: str
     score: float
-    model: str           # the producing arm's config
-    action: str          # "wider" | "deeper"
+    model: str  # the producing arm's config
+    action: str  # "wider" | "deeper"
     depth: int
-    parent: int | None   # index into candidates, or None for a wider seed
+    parent: int | None  # index into candidates, or None for a wider seed
 ```
 
 ## The model-roster abstraction
@@ -178,14 +179,24 @@ round-robin rotation with a *boolean verifier*. Repair is a degenerate ensemble.
 # dialectica/ensemble.py
 Scorer = Callable[[str], float]
 
+
 class EnsembleSearchEngine:
-    def __init__(self, problem, scorer, roster, max_calls=8,
-                 solved_score=1.0, solution_format="", policy=None): ...
+    def __init__(
+        self,
+        problem,
+        scorer,
+        roster,
+        max_calls=8,
+        solved_score=1.0,
+        solution_format="",
+        policy=None,
+    ): ...
     async def run(self) -> dict[str, Any]: ...
+
 
 def create_ensemble_engine(
     problem: str,
-    scorer: Scorer,                    # MANDATORY, positional
+    scorer: Scorer,  # MANDATORY, positional
     models: list[str] | None = None,
     max_calls: int = 8,
     solved_score: float = 1.0,

@@ -36,19 +36,22 @@ uv add dialectica      # 或: pip install dialectica
 import os, asyncio
 from dialectica import create_repair_engine
 
-os.environ["GOOGLE_API_KEY"] = "..."          # 环境配置由应用负责
+os.environ["GOOGLE_API_KEY"] = "..."  # 环境配置由应用负责
+
 
 # 验证器对任意客观检查返回 (passed, feedback)——单元测试、JSON schema、
 # linter、断言校验的业务逻辑。引擎据反馈反复修复，直到通过或用尽次数。
 def verify(answer: str) -> tuple[bool, str]:
-    ok = "def solve" in answer                 # 你的真实检查写这里
+    ok = "def solve" in answer  # 你的真实检查写这里
     return ok, "" if ok else "no solve() function defined"
+
 
 async def main():
     result = await create_repair_engine(
         "Write a solve() function that ...", verifier=verify
     ).run()
     print(result["passed"], result["attempts"], result["final_answer"])
+
 
 asyncio.run(main())
 ```
@@ -318,9 +321,11 @@ export DIALECTICA_ADK_TELEMETRY=true              # 或改设 OTEL_EXPORTER_OTLP
 ```python
 from dialectica import create_repair_engine
 
+
 def verify(code: str) -> tuple[bool, str]:
     # 你的真实检查——跑测试、校验 schema 等
     return True, ""
+
 
 engine = create_repair_engine("Write solve()", verifier=verify, max_attempts=3)
 result = await engine.run()
@@ -332,10 +337,12 @@ result = await engine.run()
 ```python
 from dialectica import Workflow, agent
 
+
 async def script():
     return await agent("Fix the failing test", tools=[read_file, run_tests])
 
-result = await Workflow(script).run()   # 工具负责行动；事后检查结果
+
+result = await Workflow(script).run()  # 工具负责行动；事后检查结果
 ```
 
 ### 模式（仅供示意——不是 ship 出去的 API）

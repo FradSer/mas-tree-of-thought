@@ -228,22 +228,29 @@ pitfalls are in `best-practices.md`.
 Headline shape:
 
 ```python
-Scorer = Callable[[str], float]   # higher is better; mandatory, positional
+Scorer = Callable[[str], float]  # higher is better; mandatory, positional
+
 
 def create_ensemble_engine(
     problem: str,
-    scorer: Scorer,                    # MANDATORY value signal
-    models: list[str] | None = None,   # roster; None -> [get_model_config("GENERATOR")]
+    scorer: Scorer,  # MANDATORY value signal
+    models: list[str] | None = None,  # roster; None -> [get_model_config("GENERATOR")]
     max_calls: int = 8,
     solved_score: float = 1.0,
     solution_format: str = "",
-    policy: Policy | None = None,       # default: Thompson bandit
+    policy: Policy | None = None,  # default: Thompson bandit
 ) -> EnsembleSearchEngine: ...
 
+
 # repair.py gains one optional kwarg, fully back-compatible:
-def create_repair_engine(problem, verifier, max_attempts=3,
-                         model_config=None, solution_format="",
-                         models: list[str] | None = None): ...
+def create_repair_engine(
+    problem,
+    verifier,
+    max_attempts=3,
+    model_config=None,
+    solution_format="",
+    models: list[str] | None = None,
+): ...
 ```
 
 `run()` returns `{final_answer, passed, attempts, history}` for both engines;

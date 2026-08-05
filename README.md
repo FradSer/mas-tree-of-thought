@@ -31,20 +31,23 @@ uv add dialectica      # or: pip install dialectica
 import os, asyncio
 from dialectica import create_repair_engine
 
-os.environ["GOOGLE_API_KEY"] = "..."          # the app owns env setup
+os.environ["GOOGLE_API_KEY"] = "..."  # the app owns env setup
+
 
 # A verifier returns (passed, feedback) for ANY objective check — unit tests,
 # a JSON schema, a linter, assertion-checked logic. The engine repairs against
 # the feedback until it passes or runs out of attempts.
 def verify(answer: str) -> tuple[bool, str]:
-    ok = "def solve" in answer                 # your real check goes here
+    ok = "def solve" in answer  # your real check goes here
     return ok, "" if ok else "no solve() function defined"
+
 
 async def main():
     result = await create_repair_engine(
         "Write a solve() function that ...", verifier=verify
     ).run()
     print(result["passed"], result["attempts"], result["final_answer"])
+
 
 asyncio.run(main())
 ```
@@ -74,15 +77,22 @@ from dialectica import Workflow
 from dialectica import workflow as wf
 from dialectica.workflow import register_workflow
 
+
 async def research(args):
     wf.phase("Gather")
     return await wf.agent(f"Research: {args['topic']}")
 
+
 register_workflow("research", research)
-result = await Workflow(research, args={"topic": "cache design"}, meta={
-    "name": "research", "description": "fan-out research",
-    "phases": [{"title": "Gather"}],
-}).run()
+result = await Workflow(
+    research,
+    args={"topic": "cache design"},
+    meta={
+        "name": "research",
+        "description": "fan-out research",
+        "phases": [{"title": "Gather"}],
+    },
+).run()
 ```
 
 ### Claude Workflow parity — and what small models can gain from it
@@ -306,9 +316,11 @@ stable `gemini-3.1-pro` (404 on generateContent). Provider strings are
 ```python
 from dialectica import create_repair_engine
 
+
 def verify(code: str) -> tuple[bool, str]:
     # your real check — run the tests, validate the schema, etc.
     return True, ""
+
 
 engine = create_repair_engine("Write solve()", verifier=verify, max_attempts=3)
 result = await engine.run()
@@ -320,10 +332,12 @@ result = await engine.run()
 ```python
 from dialectica import Workflow, agent
 
+
 async def script():
     return await agent("Fix the failing test", tools=[read_file, run_tests])
 
-result = await Workflow(script).run()   # tools do the acting; check the outcome after
+
+result = await Workflow(script).run()  # tools do the acting; check the outcome after
 ```
 
 ### Patterns (illustrative only — not shipped API)
