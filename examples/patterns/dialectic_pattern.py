@@ -88,9 +88,11 @@ SYNTHESIS_PROMPT = """You are resolving a dialectic: a thesis and the strongest 
 Produce a SYNTHESIS that transcends the rivalry: take what is right in the thesis AND in each rival, resolve the tension between their underlying principles, and deliver a solution stronger than any of them alone. Do not pick a winner or staple them together — integrate the conflicting truths into a higher solution that none of them held.
 
 Your synthesis must DOMINATE what a single expert writes on a first pass — that is the bar it is measured against:
-- Be at least as complete and concrete as the better individual solution: carry forward its specific, actionable detail (numbers, steps, sequencing). Do NOT abstract the specifics away into generalities — that is the most common way a synthesis ends up merely tying a one-shot answer.
-- Make a clear, decisive recommendation, and state the precise conditions under which the opposite choice would win instead.
-- Name the failure mode of the naive one-sided answer, and show concretely how this solution avoids it.
+- Pick ONE binding decision and commit to it. Do NOT enumerate every option — a single-pass answer already does that. Yours wins by sharpness, not coverage.
+- Lead with the single sharpest recommendation and the precise trigger that decides it (a measurable condition, not "when ready").
+- Resolve the core tension explicitly: name the condition under which each side wins, and make a decisive recommendation for THIS problem's context.
+- Name the non-obvious failure mode a naive one-sided answer misses — and show concretely how this solution structurally avoids it.
+- Carry forward the specific numbers, steps, and trade-offs from the thesis and rivals; do NOT abstract them into vagueness.
 
 **What makes a synthesis better (judge yourself against this):**
 {criteria}

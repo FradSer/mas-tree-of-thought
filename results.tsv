@@ -1,0 +1,3 @@
+commit	score	status	description
+BASELINE	-0.500	keep	unmodified dialectic, scored gpt-5.5 judge, 3 meta problems (dial_matched NET mean)
+EXP1	-0.233	keep	port reflection synthesis sharpness (ONE binding decision + trigger + carry numbers) into SYNTHESIS_PROMPT; improved from -0.500
