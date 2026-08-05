@@ -6,11 +6,11 @@ import logging
 import os
 import subprocess
 import tempfile
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 

@@ -79,7 +79,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Type, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -309,11 +309,11 @@ def in_workflow() -> bool:
 async def agent(
     prompt: str,
     *,
-    schema: Type[BaseModel] | None = None,
+    schema: type[BaseModel] | None = None,
     tools: list[Any] | None = None,
     instructions: str = "",
     label: str | None = None,
-    phase: str | None = None,  # noqa: A002 — mirrors the Workflow tool's opt name
+    phase: str | None = None,
     model: str | None = None,
     max_attempts: int = 3,
     isolation: str | None = None,
@@ -502,7 +502,7 @@ async def agent(
     return result
 
 
-def _parse_structured(response: str, schema: Type[BaseModel]) -> BaseModel | None:
+def _parse_structured(response: str, schema: type[BaseModel]) -> BaseModel | None:
     """Parse an LLM JSON response into ``schema``, tolerating fences/escapes.
 
     Models in schema mode often wrap the JSON object in narration or a markdown
@@ -741,25 +741,25 @@ class Workflow:
 
 
 __all__ = [
-    "Workflow",
     "Budget",
     "BudgetExhausted",
-    "WorkflowMetaError",
+    "Workflow",
     "WorkflowAgentCapExceeded",
+    "WorkflowMetaError",
     "WorkflowWorktreeError",
     "agent",
-    "parallel",
-    "pipeline",
-    "workflow",
-    "phase",
-    "log",
-    "budget",
     "args",
-    "run_id",
+    "budget",
     "in_workflow",
+    "log",
+    "parallel",
+    "phase",
+    "pipeline",
+    "run_id",
+    "workflow",
     "worktree_path",
 ]
 
-from .workflow_registry import list_workflows, register_workflow  # noqa: E402
+from .workflow_registry import list_workflows, register_workflow
 
-__all__ += ["register_workflow", "list_workflows"]
+__all__ += ["list_workflows", "register_workflow"]

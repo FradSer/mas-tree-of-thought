@@ -8,7 +8,7 @@ import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Type
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -42,7 +42,7 @@ def args_fingerprint(args: Any) -> str:
 def agent_cache_key(
     prompt: str,
     *,
-    schema: Type[BaseModel] | None,
+    schema: type[BaseModel] | None,
     tools: list[Any] | None,
     instructions: str,
     label: str | None,
@@ -174,7 +174,7 @@ class RunJournal:
 
 
 def serialize_agent_result(
-    result: Any, schema: Type[BaseModel] | None
+    result: Any, schema: type[BaseModel] | None
 ) -> AgentJournalEntry:
     if result is None:
         return AgentJournalEntry(
@@ -202,7 +202,7 @@ def serialize_agent_result(
 
 
 def deserialize_agent_result(
-    entry: AgentJournalEntry, schema: Type[BaseModel] | None
+    entry: AgentJournalEntry, schema: type[BaseModel] | None
 ) -> Any:
     if entry.result_kind == "none":
         return None

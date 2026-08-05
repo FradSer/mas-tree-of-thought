@@ -31,7 +31,7 @@ the partial history is lost with it, exactly as any other over-budget
 
 import logging
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from . import workflow as wf
 
@@ -163,7 +163,7 @@ def create_repair_engine(
     problem: str,
     verifier: Verifier,
     max_attempts: int = 3,
-    model_config: Optional[str] = None,
+    model_config: str | None = None,
     solution_format: str = "",
     models: list[str] | None = None,
 ) -> IterativeRepairEngine:

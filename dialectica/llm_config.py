@@ -91,7 +91,7 @@ def _parse_model_config(config_str: str) -> str | LiteLlm:
         )
         return _DEFAULT_MODEL
 
-    except Exception as e:
+    except (ValueError, KeyError) as e:
         logger.error("Failed to parse model config '%s': %s", config_str, e)
         return _DEFAULT_MODEL
 

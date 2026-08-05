@@ -56,24 +56,24 @@ from .workflow import (
     pipeline,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022 — logical grouping, not alphabetical
     # Workflow primitives — the composable execution kernel. agent(tools=...)
     # is what lets a stage add capability instead of only rearranging text.
-    "Workflow",
     "Budget",
     "BudgetExhausted",
     "TokenUsage",
+    "Workflow",
     "agent",
-    "parallel",
-    "pipeline",
-    "phase",
-    "log",
-    "budget",
     "args",
+    "budget",
     "in_workflow",
+    "log",
+    "parallel",
+    "phase",
+    "pipeline",
     # Execution-guided repair — verifier-in-the-loop; cost-efficient reliability
-    "create_repair_engine",
     "IterativeRepairEngine",
+    "create_repair_engine",
 ]
 
 __version__ = "0.7.0"

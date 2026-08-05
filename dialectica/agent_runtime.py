@@ -15,6 +15,7 @@ import os
 import random
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Self
 
 from google.adk.agents import LlmAgent
 from google.adk.apps.app import App
@@ -54,7 +55,7 @@ class AgentResponse(str):
 
     usage: TokenUsage
 
-    def __new__(cls, text: str, usage: TokenUsage) -> "AgentResponse":
+    def __new__(cls, text: str, usage: TokenUsage) -> "Self":
         obj = super().__new__(cls, text)
         obj.usage = usage
         return obj
