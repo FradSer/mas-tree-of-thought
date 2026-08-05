@@ -147,7 +147,11 @@ async def self_refine(agent, problem: str, rounds: int) -> str:
 
 def _engine_factory(kind: str):
     if kind == "dialectic":
-        return lambda stmt: create_dialectic_engine(stmt)
+        # Pin max_rounds=3: the 0-3-2 finding this ablation reproduces was
+        # measured on the 3-round dialectic. The pattern's default is now 5
+        # (the finding-#9 tuning); leaving it unpinned would silently re-measure
+        # a different configuration than the one the 0-3-2 citation describes.
+        return lambda stmt: create_dialectic_engine(stmt, max_rounds=3)
     return lambda stmt: create_engine(stmt, max_depth=2, beam_width=2, max_gan_rounds=2)
 
 
