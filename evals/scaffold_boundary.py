@@ -84,12 +84,13 @@ Provide the solution directly."""
 
 
 def _wire_env() -> None:
-    """Default the cliproxy wiring like ``score_workflow.sh`` (never clobber set vars)."""
-    os.environ.setdefault(
-        "OPENAI_API_BASE",
-        f"http://{os.environ.get('CLIPROXYAPI_HOST', '10.10.0.195')}"
-        f":{os.environ.get('CLIPROXYAPI_HOST_PORT', '8317')}/v1",
-    )
+    """Default the cliproxy wiring like ``score_workflow.sh`` (never clobber set vars).
+
+    No private-IP fallback: the proxy host comes from ``CLIPROXYAPI_HOST`` (or an
+    explicit ``OPENAI_API_BASE``). This file is committed to a public repo, so a
+    LAN address must not be baked in as a default.
+    """
+    os.environ.setdefault("OPENAI_API_BASE", os.environ.get("CLIPROXYAPI_HOST", ""))
     os.environ.setdefault("OPENAI_API_KEY", os.environ.get("CLIPROXYAPI_TOKEN", ""))
     os.environ.setdefault("DEFAULT_MODEL_CONFIG", "openai:qwen3.6-35b-a3b")
     os.environ.setdefault("JUDGE_MODEL_CONFIG", "openai:gpt-5.5")
