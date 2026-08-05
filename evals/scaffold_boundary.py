@@ -33,7 +33,6 @@ import argparse
 import asyncio
 import json
 import os
-import random
 
 from google.adk.agents import LlmAgent
 
@@ -86,11 +85,16 @@ Provide the solution directly."""
 def _wire_env() -> None:
     """Default the cliproxy wiring like ``score_workflow.sh`` (never clobber set vars).
 
-    No private-IP fallback: the proxy host comes from ``CLIPROXYAPI_HOST`` (or an
-    explicit ``OPENAI_API_BASE``). This file is committed to a public repo, so a
-    LAN address must not be baked in as a default.
+    ``CLIPROXYAPI_HOST`` is a bare host (no scheme/port); wrap it the same way
+    ``evals/score_workflow.sh`` does. No private-IP fallback: a LAN address must
+    not be baked in as a default, since this file lives in a public repo.
     """
-    os.environ.setdefault("OPENAI_API_BASE", os.environ.get("CLIPROXYAPI_HOST", ""))
+    host = os.environ.get("CLIPROXYAPI_HOST")
+    if host:
+        os.environ.setdefault(
+            "OPENAI_API_BASE",
+            f"http://{host}:{os.environ.get('CLIPROXYAPI_HOST_PORT', '8317')}/v1",
+        )
     os.environ.setdefault("OPENAI_API_KEY", os.environ.get("CLIPROXYAPI_TOKEN", ""))
     os.environ.setdefault("DEFAULT_MODEL_CONFIG", "openai:qwen3.6-35b-a3b")
     os.environ.setdefault("JUDGE_MODEL_CONFIG", "openai:gpt-5.5")
@@ -151,7 +155,11 @@ async def score_answer(problem: str, answer: str) -> float:
     Uses ``agent_runtime.run_agent`` directly (not ``wf.agent``, which requires a
     Workflow script context) — the same seam the repo's own ``judge.py`` uses.
     The judge's prompt-driven JSON is parsed into a ``Verdict``; unparseable
-    output re-asks (up to 3), then defaults to a 0 score (never a silent win).
+    output re-asks (up to 3), then defaults to the neutral midpoint 5.0 — never
+    0.0, which would credit the opposing arm with a full 10-point win on that
+    problem and manufacture a NET swing larger than the signal being measured
+    (the repo's ``judge.py`` maps a ``parse_failed`` verdict to a neutral tie,
+    not an extreme score).
     """
     instruction = build_scoring_prompt(answer, {"problem": problem}, DEFAULT_CRITERIA)
     verdict: Verdict | None = None
@@ -165,7 +173,7 @@ async def score_answer(problem: str, answer: str) -> float:
             continue
         if verdict is not None:
             return clamp_score(verdict)
-    return 0.0
+    return 5.0
 
 
 _judge_agent_cache: LlmAgent | None = None
@@ -184,9 +192,8 @@ def _judge_agent() -> LlmAgent:
     return _judge_agent_cache
 
 
-async def run(limit: int | None, judge_seed: int) -> dict:
+async def run(limit: int | None) -> dict:
     _wire_env()
-    random.seed(judge_seed)
     problems = META_PROBLEMS[:limit] if limit else META_PROBLEMS
     solver = create_agent(
         role="Generator", role_name="Solver", model_config=get_model_config("GENERATOR")
@@ -270,10 +277,9 @@ def main() -> None:
         description="Pure-LLM scaffold vs prompt-matched single call (scored, boundary hunt)."
     )
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--judge-seed", type=int, default=42)
     ap.add_argument("--json", type=str, default="")
     args = ap.parse_args()
-    report = asyncio.run(run(args.limit or None, args.judge_seed))
+    report = asyncio.run(run(args.limit or None))
     print(render(report))
     if args.json:
         os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
