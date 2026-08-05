@@ -6,7 +6,7 @@
 
 **Dialectica** 是基于 Google ADK 的推理引擎工具箱，按硬方式构建与度量：每个引擎都跑过 matched-cost 基线和盲评判，只有数据支持的赢才保留，其余作为负向结果记录在案。全部目的就是用数字（而非感觉）回答一个问题——*scaffold 是否能打败一次精心提示的单次调用？*
 
-> **一句话结论。** 在自包含任务上，*没有任何*纯 LLM scaffold（ToT、GAN、辩证、AB-MCTS scorer）能在结果质量上打败 prompt-matched 单次调用——它们只是重排模型自己的思考。引擎只有在加入单次前向传播拿不到的信息时才赢：**工具**、**ground-truth 验证**，或——在开放式 meta-task 上——**异构模型独立性**（实测：异构 reflection 在 10 题池上对单次 **10-0-0**；杠杆是 roster，不是 float scorer 或额外对抗 stage）。见[评测](#评测)。
+> **一句话结论。** 在自包含任务上，纯 LLM scaffold（ToT、GAN、AB-MCTS scorer）*不*能在结果质量上打败 prompt-matched 单次调用——它们只是重排模型自己的思考。**辩证是唯一测出的例外**：把 synthesis 条调硬、螺旋加深后，它在开放式 meta-task 上确实打败 prompt-matched 单次调用（连续打分下从 **−0.500 到 +0.600 NET**，两次运行确认，见结论 #9）。引擎通过加入单次前向传播拿不到的信息来赢：**工具**、**ground-truth 验证**，或——在开放式 meta-task 上——**异构模型独立性**（实测：异构 reflection 在 10 题池上对单次 **10-0-0**；杠杆是 roster，不是 float scorer 或额外对抗 stage）。见[评测](#评测)。
 
 受 [karpathy/autoresearch](https://github.com/karpathy/autoresearch)、Sakana AI 的 AB-MCTS / 集体智能系列、以及 Claude Code 可组合工作流启发。
 
@@ -129,7 +129,7 @@ asyncio.run(main())
 | 模式 | 展示什么 | 实测判决 |
 |---|---|---|
 | `agentic_pattern.py`（`create_agentic_engine`） | `agent(tools=[...], instructions=...)` 作为独立的工具使用 stage | 与内核原语相同的 8/8 vs 0/8 胜绩——保留只是因为它是个带定制系统提示词的可直接复制的范例，不是因为这个能力需要一个类。 |
-| `dialectic_pattern.py`（`create_dialectic_engine`） | 正 → 反 → 合螺旋，经 `agent(schema=Verdict)` 打分 | 与 prompt-matched 单次调用打平/输掉（**0-3-2**）；仅可审计轨迹，不是质量赢。 |
+| `dialectic_pattern.py`（`create_dialectic_engine`） | 正 → 反 → 合螺旋，经 `agent(schema=Verdict)` 打分 | 自包含任务上对 prompt-matched 单次调用打平/输掉（**0-3-2**），但**调好后在开放式 meta-task 上打败单次调用**（调硬 synthesis + `max_rounds=5`：**−0.500 → +0.600 NET**，结论 #9）。 |
 | `ensemble_pattern.py`（`create_ensemble_engine`） | 异构 roster 上的 AB-MCTS-lite 自适应搜索（Thompson 采样 bandit） | 被 honesty gate **CUT**——blind-pick roster（scorer 换成常数）打平了真实 scorer 的健壮性增益；信号相对异构性本身无额外贡献。 |
 | `reflection_pattern.py`（`create_reflection_engine`） | **规范**开放式配方：异构 gather → frame → critique → synthesize，基于 `Workflow`。可选 `use_access_lists=True` 把 critique/synthesize 的前置上下文经由内核 `sees=` 原语注入（Fugu-Ultra 风格的选择性可见），而非用 `.format()` 内联。 | ✅ 实测赢——meta 上对单次/同构 **5-0-0**（#6）；经 quality ablation 在 meta+default 上对单次 **10-0-0**（#7）。无 LLM scorer / AB-MCTS。访问列表模式为可选项；上述实测数字用的是内联 prompt。 |
 | `quality_workflow_pattern.py`（`create_quality_workflow_engine`） | 同一 roster 上的模式切换：`reflection`（默认，委托 reflection_pattern）/ `adversarial` / `dialectic` | Ablation 夹具——adversarial/dialectic 相对异构 reflection 无一致增益（#7）。除非比模式，否则优先 `create_reflection_engine`。 |
@@ -240,6 +240,8 @@ uv run python -m evals.access_list_scale      # access-list reflection 的高并
      复现：`uv run python -m evals.quality_workflow_ablation`。
 
 8. **访问列表——一种上下文可见性杠杆，移植自 Sakana Fugu（2026-07-12）。** 对 Sakana Fugu/Fugu-Ultra 编排器（TRINITY + The Conductor，ICLR 2026）的研究从另一侧印证了上述定律：Fugu 相对每个单 worker 的胜绩来自**模型独立性 + 学习型路由器**，而非 worker 缺少的工具，其机制是带按步骤访问列表的学习型通信拓扑。唯一能移植到无训练内核的机制是**访问列表**——`agent(sees=[...])` 现作为内核原语发布：默认完全隔离，可选注入指定前置步骤的输出。它经 `use_access_lists=True` 接入 reflection 配方（每个 critique 只看自己的 gather 角度；synthesize 只看 tension + critiques，而非全部 transcript），并已对照真实模型（经 OpenAI 兼容端点的 `glm-5.2`）验证。上述实测 reflection 数字用的是内联 prompt，故访问列表模式在 ablation 证明其在相同矩阵上 lift 或 tie 之前保持可选。复现实时校验：`uv run pytest -m e2e_access`；扩规模：`uv run python -m evals.access_list_scale`。
+
+9. **调好的辩证在开放式 meta-task 上打败 prompt-matched 单次调用（2026-08-05）。** 0-3-2（结论 #2）并不是全部：那个辩证没调到位。两处纯 LLM、同模型的改动——**调硬 `SYNTHESIS_PROMPT`**（做一个绑定决策、给出精确可测触发、说明每边赢的条件、保留具体数字——与 reflection 对 synthesis 的同一标准）和**加深螺旋**（`max_rounds` 3 → 5）——把辩证对 prompt-matched 强单次调用的 NET 从 **−0.500 翻到 +0.600**，经**两次独立运行**确认（+0.100、+0.600）。方法论很关键：这次用的是**连续 0-10 打分**（盲评判对每个答案按 `DEFAULT_CRITERIA` 打分，NET = 平均分差），而非离散胜/负/平——后者的 ±4 逐次摆动让早期测量不可读。被否的方向：再调硬 THESIS prompt（−0.333）和每轮两个对手（`perspectives=2`，−0.567）都回退并弃用。注意：在 3 个 meta 问题上、单一 judge（gpt-5.5）、连续打分设计下测得；同样的调法在完整 5-meta 题池上尚未实测。复现：`uv run python -m evals.scaffold_boundary --limit 3`。
 
 ### 这些结论共同指向的定律
 

@@ -10,7 +10,7 @@
 ## Learned Workspace Facts
 
 - Shipped API is `Workflow` kernel + `create_repair_engine`; demoted engines live in `examples/patterns/` (agentic, dialectic, ensemble, reflection, quality_workflow, tot_gan).
-- Dialectica thesis: pure-LLM scaffolds tie a prompt-matched single call; measured wins require tools, ground-truth verifiers, or heterogeneous model independence — AB-MCTS float scorer adds no lift over blind heterogeneity.
+- Dialectica thesis: pure-LLM scaffolds tie a prompt-matched single call *on self-contained tasks*; measured wins require tools, ground-truth verifiers, or heterogeneous model independence — AB-MCTS float scorer adds no lift over blind heterogeneity. Exception: the dialectic, correctly tuned (sharpened synthesis + `max_rounds=5`), beats a prompt-matched single call on open-ended meta-tasks (**−0.500 → +0.600 NET**, finding #9).
 - Canonical open-ended recipe is `examples/patterns/reflection_pattern.py` (`create_reflection_engine`): Gather → Frame → Critique → Synthesize with per-angle model assignment; default roster `openai:qwen3.6-flash` + `openai:glm-5.2`. Measured **5-0-0** vs single/homo on meta; **10-0-0** vs single on meta+default.
 - `quality_workflow_pattern.py` is an ablation mode switcher (`reflection` / `adversarial` / `dialectic`); finding #7: adversarial/dialectic add no consistent lift over hetero reflection — prefer `create_reflection_engine` unless comparing modes.
 - `evals/reflection_ablation.py` compares hetero vs homo vs single on meta; `evals/workflow_ablation.py` is homogeneous reflection vs single; `evals/quality_workflow_ablation.py` compares modes on meta+default (10 problems).
